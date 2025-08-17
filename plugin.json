@@ -1,0 +1,23 @@
+{
+  "slug": "Gemini",
+  "name": "Gemini",
+  "version": "0.1.0",
+  "license": "proprietary",
+  "brand": "JoBoCl",
+  "author": "JoBoCl",
+  "authorEmail": "",
+  "authorUrl": "",
+  "pluginUrl": "",
+  "manualUrl": "",
+  "sourceUrl": "",
+  "donateUrl": "",
+  "changelogUrl": "",
+  "modules": [
+    {
+      "slug": "Gemini",
+      "name": "Gemini",
+      "description": "",
+      "tags": []
+    }
+  ]
+}
