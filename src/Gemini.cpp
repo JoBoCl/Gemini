@@ -41,11 +41,11 @@ struct Gemini : Module {
 		LIGHTS_LEN
 	};
 
-	float phase = 0.f;
 	float castorPhase = 0.f;
 	float polluxPhase = 0.f;
 	float castorSubPhase = 0.f;
 	float polluxSubPhase = 0.f;
+	float lfoPhase = 0.f;
 
 	Gemini() {
 		config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
