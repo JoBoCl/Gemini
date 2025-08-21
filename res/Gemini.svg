@@ -25,8 +25,8 @@
      inkscape:deskcolor="#d1d1d1"
      inkscape:document-units="mm"
      inkscape:zoom="2.0792508"
-     inkscape:cx="38.475397"
-     inkscape:cy="236.62369"
+     inkscape:cx="52.422728"
+     inkscape:cy="151.97782"
      inkscape:window-width="1638"
      inkscape:window-height="994"
      inkscape:window-x="66"
@@ -527,12 +527,13 @@
                 <g
    id="_1900h"
    serif:id="1900h">
-                    <circle
+                    <ellipse
    cx="1198.12"
    cy="392.35699"
-   r="42.256001"
    style="fill:#838588"
-   id="circle73" />
+   id="circle73"
+   rx="42.438023"
+   ry="42.127525" />
                     <rect
    x="1196.58"
    y="355.19601"
@@ -544,12 +545,13 @@
                 <g
    id="_1900h1"
    serif:id="1900h">
-                    <circle
+                    <ellipse
    cx="1198.12"
    cy="541.21198"
-   r="42.256001"
    style="fill:#838588"
-   id="circle74" />
+   id="circle74"
+   rx="42.438023"
+   ry="42.127525" />
                     <rect
    x="1196.58"
    y="504.05099"
@@ -561,12 +563,13 @@
                 <g
    id="_1900h2"
    serif:id="1900h">
-                    <circle
+                    <ellipse
    cx="1043.53"
    cy="456.70099"
-   r="42.256001"
    style="fill:#838588"
-   id="circle75" />
+   id="circle75"
+   rx="42.438023"
+   ry="42.127525" />
                     <rect
    x="1042"
    y="419.539"
@@ -578,12 +581,13 @@
                 <g
    id="_1900h3"
    serif:id="1900h">
-                    <circle
+                    <ellipse
    cx="1352.5"
    cy="456.70099"
-   r="42.256001"
    style="fill:#838588"
-   id="circle76" />
+   id="circle76"
+   rx="42.438023"
+   ry="42.127525" />
                     <rect
    x="1350.96"
    y="419.539"
@@ -848,6 +852,13 @@
        style="clip-rule:evenodd;fill:#ff0000;fill-opacity:1;fill-rule:evenodd;stroke-width:0.148998;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:1.5"
        id="ellipse80-3"
        inkscape:label="BUTTON" /><ellipse
+       cx="35.250038"
+       cy="100.14817"
+       rx="2.5710363"
+       ry="2.5941732"
+       style="clip-rule:evenodd;display:inline;fill:#ff0000;fill-opacity:1;fill-rule:evenodd;stroke-width:0.148998;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:1.5"
+       id="ellipse80-3-3"
+       inkscape:label="ALT_MODE_BUTTON" /><ellipse
        cx="21.536497"
        cy="80.970146"
        style="clip-rule:evenodd;fill:#ff0000;fill-opacity:1;fill-rule:evenodd;stroke-width:0.148998;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:1.5"
