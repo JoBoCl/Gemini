@@ -1,5 +1,6 @@
 #include <map>
 #include <vector>
+#include <cmath>
 
 #include "plugin.hpp"
 
@@ -314,7 +315,7 @@ struct Gemini : Module {
     // We need to attenuate it based on the LFO_PARAM
     float value = this->triangle(this->lfoPhase);  // in [-1, 1)
     if (this->getMode() == CHORUS || this->getMode() == HARD_SYNC) {
-      value *= params[LFO_PARAM].getValue();
+      value *= std::log(params[LFO_PARAM].getValue() + 1);
     }
     return value;
   }
