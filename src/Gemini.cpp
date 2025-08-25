@@ -1,6 +1,7 @@
+#include <cassert>
+#include <cmath>
 #include <map>
 #include <vector>
-#include <cmath>
 
 #include "plugin.hpp"
 
@@ -56,70 +57,34 @@ struct Gemini : Module {
         static_cast<int32_t>(params[BUTTON_PARAM].getValue()));
   }
 
-  const std::vector<ParamId> AltModeParamsForMode(const Mode& mode) const {
-    switch (mode) {
-      case CHORUS:
-        return std::vector<ParamId>{LFO_PARAM};
-      case LFO_PWM:
-        return std::vector<ParamId>{CASTOR_DUTY_PARAM, POLLUX_DUTY_PARAM};
-      case LFO_FM:
-        return std::vector<ParamId>{CASTOR_DUTY_PARAM, POLLUX_DUTY_PARAM};
-      case HARD_SYNC:
-        return std::vector<ParamId>{};
-    }
-  }
+  // Param Values - updated by user, can be slightly stale.
+  float castorPitchParam, castorDutyParam, castorRampLevelParam,
+      castorPulseLevelParam, castorSubParam;
+  float polluxPitchParam, polluxDutyParam, polluxRampLevelParam,
+      polluxPulseLevelParam, polluxSubParam;
+  float lfoParam;
+  float buttonParam;
+  float altModeParam;
+  float crossfadeParam;
 
-  // std::map<Mode, std::map<ParamId, float>> altParams;
+  Mode mode = CHORUS;
+  bool altMode = false;
 
-  std::vector<std::map<ParamId, float>> altParams;
-
-  const float altParam(Mode mode, ParamId param) const {
-    switch (mode) {
-      case CHORUS:
-        switch (param) {
-          case LFO_PARAM:
-            return altModeLfoCv;
-          default:
-            return 0.f;
-        }
-      case LFO_PWM:
-        switch (param) {
-          case CASTOR_DUTY_PARAM:
-            return lfoPwmCastorPulseWidthCentre;
-          case POLLUX_DUTY_PARAM:
-            return lfoPwmPolluxPulseWidthCentre;
-          default:
-            return 0.f;
-        }
-      case LFO_FM:
-        switch (param) {
-          case CASTOR_DUTY_PARAM:
-            return lfoFmCastorPulseWidth;
-          case POLLUX_DUTY_PARAM:
-            return lfoFmPolluxPulseWidth;
-          default:
-            return 0.f;
-        }
-      case HARD_SYNC:
-        switch (param) {
-          case LFO_PARAM:
-            return altModeLfoCv;
-          default:
-            return 0.f;
-        }
-    }
-  }
-
-  void updateAltParam(Mode mode, ParamId param, float value) {}
-
-  // Some modes use a hidden LFO frequency, and use the LFO knob to determine
-  // amplitude.
   float altModeLfoCv = 0.f;
+  float lfoAmplitudeValue = 0.f;
+  float lfoChorusFreqCv = 0.f;
+  float lfoPwmFreqCv = 0.f;
+  float lfoFmFreqCv = 0.f;
+  float lfoHardSyncFreqCv = 0.f;
   float lfoPwmCastorPulseWidthCentre = 0.f;
   float lfoPwmPolluxPulseWidthCentre = 0.f;
   float lfoFmCastorPulseWidth = 0.5f;
   float lfoFmPolluxPulseWidth = 0.5f;
+  float polluxPitchMultiplier = -1.f;
 
+  float paramsLen = -3.14f;
+
+  // State
   float castorPhase = 0.f;
   float polluxPhase = 0.f;
   float castorSubPhase = 0.f;
@@ -128,6 +93,7 @@ struct Gemini : Module {
 
   Gemini() {
     config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
+
     configParam(CASTOR_PITCH_PARAM, -1.f, 1.f, 0.f, "Castor pitch");
     configParam(POLLUX_PITCH_PARAM, -1.f, 1.f, 0.f, "Pollux pitch");
     configParam(LFO_PARAM, 0.f, 1.f, 0.f, "LFO");
@@ -141,32 +107,138 @@ struct Gemini : Module {
     configParam(CASTOR_SUB_LEVEL_PARAM, 0.f, 1.f, 0.f, "Castor sub level");
     configParam(POLLUX_SUB_LEVEL_PARAM, 0.f, 1.f, 0.f, "Pollux sub level");
     configParam(POLLUX_RAMP_LEVEL_PARAM, 0.f, 1.f, 0.f, "Pollux ramp level");
+    configParam(ALT_MODE_BUTTON_PARAM, 0.f, 1.f, 0.f, "Alt Mode switch");
+
     configInput(CASTOR_DUTY_INPUT, "Castor duty");
     configInput(POLLUX_DUTY_INPUT, "Pollux duty");
     configInput(CASTOR_PITCH_INPUT, "Castor pitch");
     configInput(POLLUX_PITCH_INPUT, "Pollux pitch");
+
     configOutput(CASTOR_MIX_OUTPUT, "Castor");
     configOutput(MIX_OUTPUT, "Mix");
     configOutput(POLLUX_MIX_OUTPUT, "Pollux");
-    configParam(ALT_MODE_BUTTON_PARAM, 0.f, 1.f, 0.f, "Alt Mode switch");
+  }
+
+  inline float& getParamRef(ParamId param) {
+    return this->getParamRef(this->altMode, this->mode, param);
+  }
+
+  float& getParamRef(bool altMode, Mode lfoMode, ParamId param) {
+    switch (param) {
+      case CASTOR_PITCH_PARAM:
+        return castorPitchParam;
+      case POLLUX_PITCH_PARAM:
+        return lfoMode == HARD_SYNC ? polluxPitchMultiplier : polluxPitchParam;
+      case CASTOR_RAMP_LEVEL_PARAM:
+        return castorRampLevelParam;
+      case CASTOR_PULSE_LEVEL_PARAM:
+        return castorPulseLevelParam;
+      case POLLUX_PULSE_LEVEL_PARAM:
+        return polluxPulseLevelParam;
+      case BUTTON_PARAM:
+        return buttonParam;
+      case CASTOR_SUB_LEVEL_PARAM:
+        return castorSubParam;
+      case POLLUX_SUB_LEVEL_PARAM:
+        return polluxSubParam;
+      case POLLUX_RAMP_LEVEL_PARAM:
+        return polluxRampLevelParam;
+      case ALT_MODE_BUTTON_PARAM:
+        return altModeParam;
+      case CROSSFADE_PARAM:
+        return crossfadeParam;
+      case CASTOR_DUTY_PARAM:
+        switch (lfoMode) {
+          case CHORUS:
+            return castorDutyParam;
+          case LFO_PWM:
+            return lfoPwmFreqCv;
+          case LFO_FM:
+            return lfoFmFreqCv;
+          case HARD_SYNC:
+            return lfoHardSyncFreqCv;
+        }
+      case POLLUX_DUTY_PARAM:
+        switch (lfoMode) {
+          case CHORUS:
+            return polluxDutyParam;
+          case LFO_PWM:
+            return polluxDutyParam;
+          case LFO_FM:
+            return polluxDutyParam;
+          case HARD_SYNC:
+            return polluxDutyParam;
+        }
+      case LFO_PARAM:
+        switch (lfoMode) {
+          case CHORUS:
+            return altMode ? lfoAmplitudeValue : lfoChorusFreqCv;
+          case LFO_PWM:
+            return lfoPwmFreqCv;
+          case LFO_FM:
+            return lfoFmFreqCv;
+          case HARD_SYNC:
+            return lfoHardSyncFreqCv;
+        }
+      case PARAMS_LEN:
+        return paramsLen;
+    }
+  }
+
+  void updateParams() {
+    bool nowAltMode = params[ALT_MODE_BUTTON_PARAM].getValue() == 1.f;
+    Mode nowMode = this->getMode();
+
+    if (nowAltMode != altMode || nowMode != mode) {
+      // Assume that users cannot click between the alt mode button and the
+      // UI controls within 2ms. Update the controls with the alt-mode (or
+      // standard) mode values (so that they know what they're altering).
+      this->altMode = nowAltMode;
+      this->mode = nowMode;
+      for (int paramInt = CASTOR_PITCH_PARAM; paramInt != PARAMS_LEN;
+           ++paramInt) {
+        ParamId p = static_cast<ParamId>(paramInt);
+        if (p == BUTTON_PARAM || p == ALT_MODE_BUTTON_PARAM) {
+          continue;
+        }
+        float& ref = this->getParamRef(nowAltMode, nowMode, p);
+        params[p].setValue(ref);
+      }
+    } else {
+      for (int paramInt = CASTOR_PITCH_PARAM; paramInt != PARAMS_LEN;
+           ++paramInt) {
+        ParamId p = static_cast<ParamId>(paramInt);
+        float& ref = this->getParamRef(nowAltMode, nowMode, p);
+        ref = params[p].getValue();
+      }
+    }
   }
 
   void process(const ProcessArgs& args) override {
+    if (args.frame % 128 == 0) {
+      updateParams();
+    }
+
     float lfoFreq = getLfoFreq(this->getLfoCv());
     lfoPhase += lfoFreq * args.sampleTime;
     if (lfoPhase >= 1.f) {
       lfoPhase -= 2.f;
     }
 
-    float castorFreq = getPitchFreq(this->getCastorPitchCv());
-    // Accumulate the phase
-    castorPhase += castorFreq * args.sampleTime;
-    castorSubPhase += castorFreq * args.sampleTime / 2.f;
-    if (castorPhase >= 1.f) {
-      castorPhase -= 2.f;
-    }
-    if (castorSubPhase >= 1.f) {
-      castorSubPhase -= 2.f;
+    bool castorReset = false;
+    {
+      float castorFreq = getPitchFreq(this->getCastorPitchCv());
+      // Accumulate the phase
+      float castorUpdate = castorFreq * args.sampleTime;
+      castorPhase += castorUpdate;
+      castorSubPhase += castorUpdate / 2.f;
+      if (castorPhase >= 1.f) {
+        castorPhase -= 2.f;
+        castorReset = true;
+      }
+      if (castorSubPhase >= 1.f) {
+        castorSubPhase -= 2.f;
+      }
     }
 
     Signals castor = this->getSignals(castorPhase, this->getCastorDutyCycle(),
@@ -180,15 +252,20 @@ struct Gemini : Module {
 
     // Pollux's behaviour generally depends on the current mode.
     float polluxFreq = getPitchFreq(this->getPolluxPitchCv());
-    polluxPhase += polluxFreq * args.sampleTime;
-    polluxSubPhase += polluxFreq * args.sampleTime / 2.f;
-    if (polluxPhase >= 1.f) {
-      polluxPhase -= 2.f;
+    if (mode == HARD_SYNC && castorReset) {
+      polluxPhase = -1.f;
+      polluxSubPhase = -1.f;
+    } else {
+      float polluxUpdate = polluxFreq * args.sampleTime;
+      polluxPhase += polluxUpdate;
+      polluxSubPhase += polluxUpdate / 2.f;
+      if (polluxPhase >= 1.f) {
+        polluxPhase -= 2.f;
+      }
+      if (polluxSubPhase >= 1.f) {
+        polluxSubPhase -= 2.f;
+      }
     }
-    if (polluxSubPhase >= 1.f) {
-      polluxSubPhase -= 2.f;
-    }
-
     Signals pollux = this->getSignals(polluxPhase, this->getPolluxDutyCycle(),
                                       polluxSubPhase);
     Signals polluxMix = this->getPolluxMix();
@@ -217,10 +294,6 @@ struct Gemini : Module {
     return castor * castor_vol + pollux * pollux_vol;
   }
 
-  float getLevelForOutput(ParamId parameter) {
-    return rack::math::clamp(params[parameter].getValue(), 0.f, 10.f);
-  }
-
   float triangle(float phase) {  // phase \in [-1, 1)
     phase += 1.f;                // phase \in [0, 2)
     if (phase > 1.f) {
@@ -234,8 +307,9 @@ struct Gemini : Module {
     return -phase;
   }
 
+  // Shift the phase to make it match gemini.wntr.dev diagrams.
   float sub(float phase) {  // phase \in [-1, 1)
-    return phase > 0 ? -1.f : 1.f;
+    return 0 < phase + 0.5f && phase + 0.5f <= 1 ? -1.f : 1.f;
   }
 
   // phase \in [-1, 1), duty in [0, 1)
@@ -264,9 +338,9 @@ struct Gemini : Module {
 
   Signals getMix(ParamId ramp, ParamId pulse, ParamId sub) {
     return {
-        params[ramp].getValue(),
-        params[pulse].getValue(),
-        params[sub].getValue(),
+        this->getParamRef(ramp),
+        this->getParamRef(pulse),
+        this->getParamRef(sub),
     };
   }
 
@@ -304,10 +378,9 @@ struct Gemini : Module {
     } else {
       // Quantize the knob output.
       // When there's no input to Castor, it has a +/- 3 Oct swing.
-      float pitchCv = params[CASTOR_PITCH_PARAM].getValue() * 3.f;
-      int8_t octave = static_cast<int8_t>(pitchCv);
-      int8_t semitone = static_cast<int8_t>((pitchCv * 12.f) - (octave * 12));
-      return static_cast<float>(octave) + static_cast<float>(semitone) / 12.f;
+      float pitchCv = getParamRef(altMode, mode, CASTOR_PITCH_PARAM) * 3.f;
+      float remainder = std::remainderf(pitchCv, 1.f / 12.f);
+      return pitchCv - remainder;
     }
   }
 
@@ -315,23 +388,26 @@ struct Gemini : Module {
     // We need to attenuate it based on the LFO_PARAM
     float value = this->triangle(this->lfoPhase);  // in [-1, 1)
     if (this->getMode() == CHORUS || this->getMode() == HARD_SYNC) {
-      value *= std::log(params[LFO_PARAM].getValue() + 1);
+      value *= std::log(getParamRef(false, this->getMode(), LFO_PARAM) + 1);
     }
     return value;
   }
 
   // Current value determining the frequency of the LFO
   float getLfoCv() {
-    if (this->getMode() == CHORUS || this->getMode() == HARD_SYNC) {
-      return this->altModeLfoCv;  // \in [0, 1)
-    } else {
-      float param = params[LFO_PARAM].getValue();  // \in [0, 1)
-      return 5.f - 10.f * param;
-    }
+    float param = this->getParamRef(this->mode == CHORUS || altMode, this->mode, LFO_PARAM);
+    return 5.f * (param + 1.f);
   }
 
   float getPolluxPitchCv() {
     float polluxBasePitchCv = this->getPolluxBasePitchCv();
+    if (this->getMode() == HARD_SYNC) {
+      auto basePitchCv =
+          inputs[POLLUX_PITCH_PARAM].isConnected()
+              ? (std::clamp(inputs[POLLUX_PITCH_PARAM].getVoltage(), -6.f, 6.f))
+              : this->getCastorPitchCv();
+      return basePitchCv + ((1.f + getParamRef(POLLUX_PITCH_PARAM)) * 1.5f);
+    }
     if (this->getMode() == CHORUS) {
       return polluxBasePitchCv + this->getLfoValue();
     }
