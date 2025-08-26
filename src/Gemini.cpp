@@ -12,6 +12,65 @@ struct Signals {
   float sub;
 };
 
+class OscillatorState {
+  float phase = -1.f;  // in [-1, 1];
+  float pitch = 0.f;
+  float baseFrequency;
+  float frequency;
+  bool cycle = false;
+
+ public:
+  OscillatorState(float startingFrequency): baseFrequency(startingFrequency),
+      frequency(startingFrequency) {}
+
+  // For hard sync
+  void resetPhase() { phase = -1.f; }
+
+  // Returns true if reset occurs.
+  bool updatePhase(float sampleTime) {
+    phase += frequency * sampleTime;
+    if (phase >= 1.f) {
+      phase -= 2.f;
+      this->cycle = !this->cycle;
+      return true;
+    }
+    return false;
+  }
+
+  void updatePitch(float pitch) {
+    if (this->pitch == pitch) {
+      return;
+    }
+    this->pitch = pitch;
+    this->frequency = baseFrequency * std::pow(2.f, pitch);
+  }
+
+  float triangle() {  // phase \in [-1, 1)
+    float triangle = this->phase + 1.f;
+    if (triangle > 1.f) {
+      triangle = 1.f - (triangle - 1.f);  // triangle \in [0, 1)
+    }
+    triangle *= 2.f;        // triangle \in [0, 2)
+    return triangle - 1.f;  // result in [-1, 1)
+  }
+
+  float ramp() {  // phase \in [-1, 1)
+    return -this->phase;
+  }
+
+  // Shift the phase to make it match gemini.wntr.dev diagrams.
+  float sub() {  // phase \in [-1, 1)
+    float sub = this->phase + (cycle ? 1.f : 0.f);
+    return 0 < phase && phase <= 1 ? -1.f : 1.f;
+  }
+
+  // phase \in [-1, 1), duty in [0, 1), offset \in [0, 1]
+  float pulse(float duty, float offset = 0.f) {
+    float normal = (phase + 1.f) / 2.f;
+    return normal > duty ? -1.f : 1.f;
+  }
+};
+
 struct Gemini : Module {
   enum ParamId {
     CASTOR_PITCH_PARAM,
@@ -52,11 +111,6 @@ struct Gemini : Module {
     HARD_SYNC,
   };
 
-  Mode getMode() {
-    return static_cast<Mode>(
-        static_cast<int32_t>(params[BUTTON_PARAM].getValue()));
-  }
-
   // Param Values - updated by user, can be slightly stale.
   float castorPitchParam, castorDutyParam, castorRampLevelParam,
       castorPulseLevelParam, castorSubParam;
@@ -85,11 +139,9 @@ struct Gemini : Module {
   float paramsLen = -3.14f;
 
   // State
-  float castorPhase = 0.f;
-  float polluxPhase = 0.f;
-  float castorSubPhase = 0.f;
-  float polluxSubPhase = 0.f;
-  float lfoPhase = 0.f;
+  OscillatorState castor = OscillatorState(rack::dsp::FREQ_C4);
+  OscillatorState pollux = OscillatorState(rack::dsp::FREQ_C4);
+  OscillatorState lfo = OscillatorState(2.f);
 
   Gemini() {
     config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
@@ -152,18 +204,18 @@ struct Gemini : Module {
           case CHORUS:
             return castorDutyParam;
           case LFO_PWM:
-            return lfoPwmFreqCv;
+            return altMode ? lfoPwmCastorPulseWidthCentre : castorDutyParam;
           case LFO_FM:
-            return lfoFmFreqCv;
+            return castorDutyParam;
           case HARD_SYNC:
-            return lfoHardSyncFreqCv;
+            return castorDutyParam;
         }
       case POLLUX_DUTY_PARAM:
         switch (lfoMode) {
           case CHORUS:
             return polluxDutyParam;
           case LFO_PWM:
-            return polluxDutyParam;
+            return altMode ? lfoPwmPolluxPulseWidthCentre : polluxDutyParam;
           case LFO_FM:
             return polluxDutyParam;
           case HARD_SYNC:
@@ -185,9 +237,12 @@ struct Gemini : Module {
     }
   }
 
+  inline Mode getMode() { return this->mode; }
+
   void updateParams() {
     bool nowAltMode = params[ALT_MODE_BUTTON_PARAM].getValue() == 1.f;
-    Mode nowMode = this->getMode();
+    Mode nowMode = static_cast<Mode>(
+        static_cast<int32_t>(params[BUTTON_PARAM].getValue()));
 
     if (nowAltMode != altMode || nowMode != mode) {
       // Assume that users cannot click between the alt mode button and the
@@ -219,65 +274,41 @@ struct Gemini : Module {
       updateParams();
     }
 
-    float lfoFreq = getLfoFreq(this->getLfoCv());
-    lfoPhase += lfoFreq * args.sampleTime;
-    if (lfoPhase >= 1.f) {
-      lfoPhase -= 2.f;
+    lfo.updatePitch(this->getLfoCv());
+    lfo.updatePhase(args.sampleTime);
+
+    castor.updatePitch(this->getCastorPitchCv());
+    bool castorReset = castor.updatePhase(args.sampleTime);
+
+    pollux.updatePitch(this->getPolluxPitchCv());
+    if (mode == HARD_SYNC && castorReset) {
+      pollux.resetPhase();
+    } else {
+      pollux.updatePhase(args.sampleTime);
     }
 
-    bool castorReset = false;
-    {
-      float castorFreq = getPitchFreq(this->getCastorPitchCv());
-      // Accumulate the phase
-      float castorUpdate = castorFreq * args.sampleTime;
-      castorPhase += castorUpdate;
-      castorSubPhase += castorUpdate / 2.f;
-      if (castorPhase >= 1.f) {
-        castorPhase -= 2.f;
-        castorReset = true;
-      }
-      if (castorSubPhase >= 1.f) {
-        castorSubPhase -= 2.f;
-      }
-    }
-
-    Signals castor = this->getSignals(castorPhase, this->getCastorDutyCycle(),
-                                      castorSubPhase);
+    Signals castorSignals =
+        this->getSignals(castor, this->getCastorDutyCycle());
     Signals castorMix = this->getCastorMix();
 
     // Audio signals are typically +/-5V
     // https://vcvrack.com/manual/VoltageStandards
-    float castorOut = 5.f * this->getOutput(castor, castorMix);
+    float castorOut = 5.f * this->getOutput(castorSignals, castorMix);
     outputs[CASTOR_MIX_OUTPUT].setVoltage(castorOut);
 
     // Pollux's behaviour generally depends on the current mode.
-    float polluxFreq = getPitchFreq(this->getPolluxPitchCv());
-    if (mode == HARD_SYNC && castorReset) {
-      polluxPhase = -1.f;
-      polluxSubPhase = -1.f;
-    } else {
-      float polluxUpdate = polluxFreq * args.sampleTime;
-      polluxPhase += polluxUpdate;
-      polluxSubPhase += polluxUpdate / 2.f;
-      if (polluxPhase >= 1.f) {
-        polluxPhase -= 2.f;
-      }
-      if (polluxSubPhase >= 1.f) {
-        polluxSubPhase -= 2.f;
-      }
-    }
-    Signals pollux = this->getSignals(polluxPhase, this->getPolluxDutyCycle(),
-                                      polluxSubPhase);
+    Signals polluxSignals =
+        this->getSignals(pollux, this->getPolluxDutyCycle());
     Signals polluxMix = this->getPolluxMix();
-    float polluxOut = 5.f * this->getOutput(pollux, polluxMix);
+    float polluxOut = 5.f * this->getOutput(polluxSignals, polluxMix);
     outputs[POLLUX_MIX_OUTPUT].setVoltage(polluxOut);
 
     outputs[MIX_OUTPUT].setVoltage(
-        this->getMix(castorOut, polluxOut, params[CROSSFADE_PARAM].getValue()));
+        this->getMix(castorOut, polluxOut, this->getParamRef(CROSSFADE_PARAM)));
   }
 
  private:
-  float getOutput(Signals wave, Signals amplitude) {
+  float getOutput(Signals& wave, Signals& amplitude) {
     return (wave.ramp * amplitude.ramp + wave.pulse * amplitude.pulse +
             wave.sub * amplitude.sub) /
            3.f;
@@ -294,35 +325,11 @@ struct Gemini : Module {
     return castor * castor_vol + pollux * pollux_vol;
   }
 
-  float triangle(float phase) {  // phase \in [-1, 1)
-    phase += 1.f;                // phase \in [0, 2)
-    if (phase > 1.f) {
-      phase = 1.f - (phase - 1.f);  // phase \in [0, 1)
-    }
-    phase *= 2.f;        // phase \in [0, 2)
-    return phase - 1.f;  // result in [-1, 1)
-  }
-
-  float ramp(float phase) {  // phase \in [-1, 1)
-    return -phase;
-  }
-
-  // Shift the phase to make it match gemini.wntr.dev diagrams.
-  float sub(float phase) {  // phase \in [-1, 1)
-    return 0 < phase + 0.5f && phase + 0.5f <= 1 ? -1.f : 1.f;
-  }
-
-  // phase \in [-1, 1), duty in [0, 1)
-  float pulse(float phase, float duty, float offset = 0.f) {
-    float normal = (phase + 1.f) / 2.f;
-    return normal > duty ? -1.f : 1.f;
-  }
-
-  Signals getSignals(float phase, float duty, float subPhase) {
+  Signals getSignals(OscillatorState& osc, float duty, float offset = 0.f) {
     return {
-        this->ramp(phase),
-        this->pulse(phase, duty),
-        this->sub(subPhase),
+        osc.ramp(),
+        osc.pulse(duty, this->getMode() == LFO_PWM ? offset : 0.f),
+        osc.sub(),
     };
   }
 
@@ -344,12 +351,16 @@ struct Gemini : Module {
     };
   }
 
+  // Returns a value in [0, 1.f].
   float getDutyCycle(InputId input, ParamId param) {
-    if (inputs[input].isConnected()) {
-      return rack::math::clamp(inputs[input].getVoltage(), 0.f, 10.f) / 10.f;
-    } else {
-      return params[param].getValue();
+    float baseDutyCycle =
+        this->getParamRef(param) + inputs[input].getNormalVoltage(0.f) / 5.f;
+    if (this->getMode() == LFO_PWM) {
+      // LFO Value \in [-1, 1]
+      baseDutyCycle += this->getLfoValue();
     }
+
+    return std::clamp(baseDutyCycle, -1.f, 1.f);
   }
 
   float getCastorDutyCycle() {
@@ -386,7 +397,7 @@ struct Gemini : Module {
 
   float getLfoValue() {
     // We need to attenuate it based on the LFO_PARAM
-    float value = this->triangle(this->lfoPhase);  // in [-1, 1)
+    float value = this->lfo.triangle();  // in [-1, 1)
     if (this->getMode() == CHORUS || this->getMode() == HARD_SYNC) {
       value *= std::log(getParamRef(false, this->getMode(), LFO_PARAM) + 1);
     }
@@ -395,7 +406,9 @@ struct Gemini : Module {
 
   // Current value determining the frequency of the LFO
   float getLfoCv() {
-    float param = this->getParamRef(this->mode == CHORUS || altMode, this->mode, LFO_PARAM);
+    // Param \in [-1, 1]
+    float param = this->getParamRef(this->getMode() == CHORUS || altMode,
+                                    this->getMode(), LFO_PARAM);
     return 5.f * (param + 1.f);
   }
 
