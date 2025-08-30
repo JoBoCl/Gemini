@@ -10,3 +10,8 @@
 /build
 /dep
 /dist
+/cmake
+
+# Dependencies
+/sdk
+
