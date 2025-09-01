@@ -20,11 +20,11 @@ class OscillatorState {
   bool cycle = false;
 
  public:
-  OscillatorState(float startingFrequency): baseFrequency(startingFrequency),
-      frequency(startingFrequency) {}
+  OscillatorState(float startingFrequency)
+      : baseFrequency(startingFrequency), frequency(startingFrequency) {}
 
   // For hard sync
-  void resetPhase() { phase = -1.f; }
+  void resetPhase() { phase = -1.f; cycle = false; }
 
   // Returns true if reset occurs.
   bool updatePhase(float sampleTime) {
@@ -287,20 +287,22 @@ struct Gemini : Module {
       pollux.updatePhase(args.sampleTime);
     }
 
-    Signals castorSignals =
-        this->getSignals(castor, this->getCastorDutyCycle());
+    Signals castorSignals = this->getSignals(
+        castor, this->getCastorDutyCycle(),
+        this->getParamRef(/*altMode=*/true, LFO_PWM, CASTOR_DUTY_PARAM));
     Signals castorMix = this->getCastorMix();
 
     // Audio signals are typically +/-5V
     // https://vcvrack.com/manual/VoltageStandards
-    float castorOut = 5.f * this->getOutput(castorSignals, castorMix);
+    float castorOut = this->getOutput(castorSignals, castorMix);
     outputs[CASTOR_MIX_OUTPUT].setVoltage(castorOut);
 
     // Pollux's behaviour generally depends on the current mode.
-    Signals polluxSignals =
-        this->getSignals(pollux, this->getPolluxDutyCycle());
+    Signals polluxSignals = this->getSignals(
+        pollux, this->getPolluxDutyCycle(),
+        this->getParamRef(/*altMode=*/true, LFO_PWM, POLLUX_DUTY_PARAM));
     Signals polluxMix = this->getPolluxMix();
-    float polluxOut = 5.f * this->getOutput(polluxSignals, polluxMix);
+    float polluxOut = this->getOutput(polluxSignals, polluxMix);
     outputs[POLLUX_MIX_OUTPUT].setVoltage(polluxOut);
 
     outputs[MIX_OUTPUT].setVoltage(
@@ -309,7 +311,8 @@ struct Gemini : Module {
 
  private:
   float getOutput(Signals& wave, Signals& amplitude) {
-    return (wave.ramp * amplitude.ramp + wave.pulse * amplitude.pulse +
+    return 5.f *
+           (wave.ramp * amplitude.ramp + wave.pulse * amplitude.pulse +
             wave.sub * amplitude.sub) /
            3.f;
   }
@@ -369,16 +372,6 @@ struct Gemini : Module {
 
   float getPolluxDutyCycle() {
     return this->getDutyCycle(POLLUX_DUTY_INPUT, POLLUX_DUTY_PARAM);
-  }
-
-  float getSubCv(float cv) { return cv - 1.f; }
-
-  float getPitchFreq(float cv) { return dsp::FREQ_C4 * std::pow(2.f, cv + 1); }
-
-  float getLfoFreq(float cv) {
-    // From https://vcvrack.com/manual/VoltageStandards
-    // Low-frequency oscillators and clock generators should use 120 BPM
-    return 2.f * std::pow(2.f, cv);
   }
 
   float getCastorPitchCv() {
