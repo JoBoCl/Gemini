@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 env:
-  RACK_DIR: ./Rack
+  RACK_DIR: ${GITHUB_WORKSPACE}/Rack
 
 jobs:
   build:
@@ -24,7 +24,7 @@ jobs:
       id: checkout-rack
       uses: actions/cache@v4
       with:
-        path: ./Rack/
+        path: ${GITHUB_WORKSPACE}/Rack/
         key: rack-folder
 
     - name: Checkout Rack
