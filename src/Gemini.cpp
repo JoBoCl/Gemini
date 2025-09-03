@@ -306,6 +306,30 @@ struct Gemini : Module {
     }
   }
 
+  /*
+   * Main logic thread
+   *
+   * Gemini is made up of two oscillators - Castor and Pollux. Castor can be
+   * thought of as the main driving oscillator, with its frequency influencing
+   * the frequency of Pollux (unless a separate CV input is provided).
+   *
+   * Each mode has a different behaviour:
+   *   * Chorus - subtle frequency modulation of Pollux only.
+   *   * LFO PWM - pulse width influenced by LFO output.
+   *   * LFO FM - frequency influenced by LFO output.
+   *   * Hard sync - Pollux gets reset every time Castor does. Pollux's
+   *       frequency becomes a multiple of Castor's.
+   *
+   * Update user-driven parameters every 128 ticks - this saves some resources
+   * and should be imperceptible to the vast majority of users.
+   *
+   * Update the pitch of the oscillators each tick, as they are externally
+   * driven and can change more frequently. The oscillators need updating every
+   * tick to ensure a smooth output.
+   *
+   * When the oscillators' frequency changes, keep the same phase to ensure a
+   * smooth transition between different frequencies.
+   */
   void process(const ProcessArgs& args) override {
     if (args.frame % 128 == 0) {
       updateParams();
@@ -324,9 +348,8 @@ struct Gemini : Module {
       pollux.updatePhase(args.sampleTime);
     }
 
-    Signals castorSignals = this->getSignals(
-        castor, this->getCastorDutyCycle(),
-        this->getParamRef(/*altMode=*/true, LFO_PWM, CASTOR_DUTY_PARAM));
+    Signals castorSignals = this->getSignals(castor, this->getCastorDutyCycle(),
+                                             this->getCastorPulseOffset());
     Signals castorMix = this->getCastorMix();
 
     // Audio signals are typically +/-5V
@@ -335,9 +358,8 @@ struct Gemini : Module {
     outputs[CASTOR_MIX_OUTPUT].setVoltage(castorOut);
 
     // Pollux's behaviour generally depends on the current mode.
-    Signals polluxSignals = this->getSignals(
-        pollux, this->getPolluxDutyCycle(),
-        this->getParamRef(/*altMode=*/true, LFO_PWM, POLLUX_DUTY_PARAM));
+    Signals polluxSignals = this->getSignals(pollux, this->getPolluxDutyCycle(),
+                                             this->getPolluxPulseOffset());
     Signals polluxMix = this->getPolluxMix();
     float polluxOut = this->getOutput(polluxSignals, polluxMix);
     outputs[POLLUX_MIX_OUTPUT].setVoltage(polluxOut);
@@ -347,6 +369,22 @@ struct Gemini : Module {
   }
 
  private:
+  inline float getCastorPulseOffset() {
+    return this->getPulseOffset(/*isCastor=*/true);
+  }
+
+  inline float getPolluxPulseOffset() {
+    return this->getPulseOffset(/*isCastor=*/false);
+  }
+
+  inline float getPulseOffset(bool isCastor) {
+    return this->getMode() == LFO_PWM
+               ? this->getParamRef(
+                     true, LFO_PWM,
+                     isCastor ? CASTOR_DUTY_PARAM : POLLUX_DUTY_PARAM)
+               : 0.f;
+  }
+
   float getOutput(Signals& wave, Signals& amplitude) {
     return 5.f *
            (wave.ramp * amplitude.ramp + wave.pulse * amplitude.pulse +
@@ -365,10 +403,10 @@ struct Gemini : Module {
     return castor * castor_vol + pollux * pollux_vol;
   }
 
-  Signals getSignals(OscillatorState& osc, float duty, float offset = 0.f) {
+  Signals getSignals(OscillatorState& osc, float duty, float offset) {
     return {
         osc.ramp(),
-        osc.pulse(duty, this->getMode() == LFO_PWM ? offset : 0.f),
+        osc.pulse(duty, offset),
         osc.sub(),
     };
   }
