@@ -155,7 +155,7 @@ struct Gemini : Module {
     configParam(LFO_PARAM, 0.f, 1.f, 0.f, "LFO");
     configParam(CASTOR_DUTY_PARAM, 0.f, 1.f, 0.f, "Castor duty");
     configParam(POLLUX_DUTY_PARAM, 0.f, 1.f, 0.f, "Pollux duty");
-    configParam(CROSSFADE_PARAM, -1.f, 1.f, 0.f, "Crossfade");
+    configParam(CROSSFADE_PARAM, 0.f, 1.f, 0.f, "Crossfade");
     configParam(CASTOR_RAMP_LEVEL_PARAM, 0.f, 1.f, 0.f, "Castor ramp level");
     configParam(CASTOR_PULSE_LEVEL_PARAM, 0.f, 1.f, 0.f, "Castor pulse level");
     configParam(POLLUX_PULSE_LEVEL_PARAM, 0.f, 1.f, 0.f, "Pollux pulse level");
@@ -392,15 +392,8 @@ struct Gemini : Module {
            3.f;
   }
 
-  // castor \in [-5, 5), pollux \in [-5, 5), mix \in [-1, 1]
-  // mix == -1 => only castor
-  // mix ==  0 => both heard equally
-  // mix ==  1 => only pollux
-  float getMix(float castor, float pollux, float mix) {
-    float pollux_vol = (1 + mix) / 2.f;
-    float castor_vol = 1 - pollux_vol;
-
-    return castor * castor_vol + pollux * pollux_vol;
+  inline float getMix(float castor, float pollux, float mix) {
+    return rack::simd::crossfade(castor, pollux, mix);
   }
 
   Signals getSignals(OscillatorState& osc, float duty, float offset) {
