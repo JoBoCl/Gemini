@@ -46,7 +46,7 @@ jobs:
     - name: Build dependencies
       id: build-dependencies
       if: steps.cached-dep.outputs.cache-hit != 'true'
-      working-directory: ${GITHUB_WORKSPACE}/Rack
+      working-directory: "${GITHUB_WORKSPACE}/Rack"
       run: make dep
 
     - name: Build
