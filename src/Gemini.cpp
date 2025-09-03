@@ -25,7 +25,10 @@ class OscillatorState {
       : baseFrequency(startingFrequency), frequency(startingFrequency) {}
 
   // For hard sync
-  void resetPhase() { phase = -1.f; cycle = false; }
+  void resetPhase() {
+    phase = -1.f;
+    cycle = false;
+  }
 
   // Returns true if reset occurs.
   bool updatePhase(float sampleTime) {
@@ -170,6 +173,39 @@ struct Gemini : Module {
     configOutput(CASTOR_MIX_OUTPUT, "Castor");
     configOutput(MIX_OUTPUT, "Mix");
     configOutput(POLLUX_MIX_OUTPUT, "Pollux");
+  }
+
+  json_t* dataToJson() override {
+    json_t* rootJ = json_object();
+    for (size_t paramInt = CASTOR_PITCH_PARAM; paramInt != PARAMS_LEN;
+         ++paramInt) {
+      ParamId param = static_cast<ParamId>(paramInt);
+      for (size_t modeInt = 0; modeInt < 4; ++modeInt) {
+        Mode mode = static_cast<Mode>(modeInt);
+        std::string name;
+        sprintf(&name[0], "%d/%d/%d", paramInt, modeInt, true);
+        json_t* val = json_real(
+            static_cast<double>(this->getParamRef(true, mode, param)));
+        json_object_set_new(rootJ, name.c_str(), val);
+        sprintf(&name[0], "%d/%d/%d", paramInt, modeInt, false);
+        val = json_real(
+            static_cast<double>(this->getParamRef(false, mode, param)));
+        json_object_set_new(rootJ, name.c_str(), val);
+      }
+    }
+    return rootJ;
+  }
+
+  void dataFromJson(json_t* rootJ) override {
+    const char* key;
+    json_t* value;
+    json_object_foreach(rootJ, key, value) {
+      int32_t paramInt, modeInt, altModeInt;
+      sscanf(key, "%d/%d/%d", &paramInt, &modeInt, &altModeInt);
+      this->getParamRef(
+          static_cast<bool>(altModeInt), static_cast<Mode>(modeInt),
+          static_cast<ParamId>(paramInt)) = json_number_value(value);
+    }
   }
 
   inline float& getParamRef(ParamId param) {
@@ -411,7 +447,8 @@ struct Gemini : Module {
     if (this->getMode() == HARD_SYNC) {
       auto basePitchCv =
           inputs[POLLUX_PITCH_PARAM].isConnected()
-              ? (rack::math::clamp(inputs[POLLUX_PITCH_PARAM].getVoltage(), -6.f, 6.f))
+              ? (rack::math::clamp(inputs[POLLUX_PITCH_PARAM].getVoltage(),
+                                   -6.f, 6.f))
               : this->getCastorPitchCv();
       return basePitchCv + ((1.f + getParamRef(POLLUX_PITCH_PARAM)) * 1.5f);
     }
