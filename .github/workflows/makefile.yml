@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 env:
-  RACK_DIR: ${GITHUB_WORKSPACE}/Rack
+  RACK_DIR: "${GITHUB_WORKSPACE}/Rack"
 
 jobs:
   build:
@@ -16,7 +16,7 @@ jobs:
 
     steps:
     - name: Install apt dependencies
-      run: sudo apt install -y unzip git curl cmake libx11-dev libglu1-mesa-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev zlib1g-dev libasound2-dev libgtk2.0-dev libgtk-3-dev libjack-jackd2-dev jq zstd libpulse-dev pkg-config libjansson-dev
+      run: sudo apt update && sudo apt install -y unzip git curl cmake libx11-dev libglu1-mesa-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev zlib1g-dev libasound2-dev libgtk2.0-dev libgtk-3-dev libjack-jackd2-dev jq zstd libpulse-dev pkg-config libjansson-dev
 
     - uses: actions/checkout@v5
     
