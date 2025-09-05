@@ -155,7 +155,7 @@ struct Gemini : Module {
     configParam(LFO_PARAM, 0.f, 1.f, 0.f, "LFO");
     configParam(CASTOR_DUTY_PARAM, 0.f, 1.f, 0.f, "Castor duty");
     configParam(POLLUX_DUTY_PARAM, 0.f, 1.f, 0.f, "Pollux duty");
-    configParam(CROSSFADE_PARAM, 0.f, 1.f, 0.f, "Crossfade");
+    configParam(CROSSFADE_PARAM, 0.f, 1.f, 0.5f, "Crossfade");
     configParam(CASTOR_RAMP_LEVEL_PARAM, 0.f, 1.f, 0.f, "Castor ramp level");
     configParam(CASTOR_PULSE_LEVEL_PARAM, 0.f, 1.f, 0.f, "Castor pulse level");
     configParam(POLLUX_PULSE_LEVEL_PARAM, 0.f, 1.f, 0.f, "Pollux pulse level");
@@ -183,11 +183,11 @@ struct Gemini : Module {
       for (size_t modeInt = 0; modeInt < 4; ++modeInt) {
         Mode mode = static_cast<Mode>(modeInt);
         std::string name;
-        sprintf(&name[0], "%d/%d/%d", paramInt, modeInt, true);
+        sprintf(&name[0], "%ld/%ld/%d", paramInt, modeInt, true);
         json_t* val = json_real(
             static_cast<double>(this->getParamRef(true, mode, param)));
         json_object_set_new(rootJ, name.c_str(), val);
-        sprintf(&name[0], "%d/%d/%d", paramInt, modeInt, false);
+        sprintf(&name[0], "%ld/%ld/%d", paramInt, modeInt, false);
         val = json_real(
             static_cast<double>(this->getParamRef(false, mode, param)));
         json_object_set_new(rootJ, name.c_str(), val);
@@ -443,6 +443,15 @@ struct Gemini : Module {
   }
 
   float getCastorPitchCv() {
+    float basePitch = this->getCastorPitchCvBase();
+    if (getMode() != LFO_FM) {
+      return basePitch;
+    }
+    float lfoValue = this->getLfoValue();
+    return basePitch + lfoValue;
+  }
+
+  float getCastorPitchCvBase() {
     if (inputs[CASTOR_PITCH_INPUT].isConnected()) {
       // Return Castor pitch with a the offset from the knob.
       return inputs[CASTOR_PITCH_INPUT].getVoltage() +
