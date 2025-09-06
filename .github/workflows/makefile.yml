@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 env:
-  RACK_DIR: "${GITHUB_WORKSPACE}/Rack"
+  RACK_DIR: ${{ github.workspace }}/Rack
 
 jobs:
   build:
@@ -34,20 +34,45 @@ jobs:
         repository: VCVRack/Rack
         lfs: true
         path: ./Rack
-        submodules: recursive
+
+    - name: Repoint speexdsp
+      uses: srt32/git-actions@v0.0.3
+      with:
+        # working-directory: "${GITHUB_WORKSPACE}/Rack"
+        args: "cd ./Rack && git submodule set-url -- dep/speexdsp https://github.com/xiph/speexdsp.git"
+
+    - name: Pull deps
+      uses: srt32/git-actions@v0.0.3
+      with:
+        # working-directory: "${GITHUB_WORKSPACE}/Rack"
+        args: "cd ./Rack && git submodule update --init --recursive"
 
     - name: Fetch built dependencies
       id: cached-dep
       uses: actions/cache@v4
       with:
-        path: ./Rack/deps
-        key: rack-deps
+        path: ./Rack/dep
+        key: rack-dep
 
     - name: Build dependencies
       id: build-dependencies
       if: steps.cached-dep.outputs.cache-hit != 'true'
-      working-directory: "${GITHUB_WORKSPACE}/Rack"
+      working-directory: "./Rack"
       run: make dep
+
+    - name: Fetch built dependencies
+      id: cached-rack
+      uses: actions/cache@v4
+      with:
+        path: ./Rack/build
+        key: rack-build
+
+    - name: Build rack
+      id: build-dependencies
+      if: steps.cached-rack.outputs.cache-hit != 'true'
+      working-directory: "./Rack"
+      run: make
 
     - name: Build
       run: make
+
