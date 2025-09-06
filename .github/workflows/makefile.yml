@@ -36,7 +36,7 @@ jobs:
         path: ./Rack
 
     - name: Mark Rack as safe
-      uses: srt32/git-actions
+      uses: srt32/git-actions@v0.0.3
       with:
         args: "cd ${GITHUB_WORKSPACE}/Rack && git config --global --add safe.directory /github/workspace/Rack"
 
