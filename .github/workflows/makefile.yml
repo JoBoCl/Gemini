@@ -35,17 +35,20 @@ jobs:
         lfs: true
         path: ./Rack
 
+    - name: Mark Rack as safe
+      uses: srt32/git-actions
+      with:
+        args: "cd ${GITHUB_WORKSPACE}/Rack && git config --global --add safe.directory /github/workspace/Rack"
+
     - name: Repoint speexdsp
       uses: srt32/git-actions@v0.0.3
       with:
-        # working-directory: "${GITHUB_WORKSPACE}/Rack"
-        args: "cd ./Rack && git submodule set-url -- dep/speexdsp https://github.com/xiph/speexdsp.git"
+        args: "cd ${GITHUB_WORKSPACE}/Rack && git submodule set-url -- dep/speexdsp https://github.com/xiph/speexdsp.git"
 
     - name: Pull deps
       uses: srt32/git-actions@v0.0.3
       with:
-        # working-directory: "${GITHUB_WORKSPACE}/Rack"
-        args: "cd ./Rack && git submodule update --init --recursive"
+        args: "cd ${GITHUB_WORKSPACE}/Rack && git submodule update --init --recursive"
 
     - name: Fetch built dependencies
       id: cached-dep
