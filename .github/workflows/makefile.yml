@@ -68,7 +68,7 @@ jobs:
         key: rack-build
 
     - name: Build rack
-      id: build-dependencies
+      id: build-rack
       if: steps.cached-rack.outputs.cache-hit != 'true'
       working-directory: "./Rack"
       run: make
