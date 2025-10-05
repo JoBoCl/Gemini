@@ -4,6 +4,8 @@
 #include <map>
 #include <vector>
 
+#include "Dsp.h"
+// #include "dsp/filter.hpp"
 #include "plugin.hpp"
 
 // TOOD - maybe this could be one of those fancy simd things?
@@ -14,19 +16,29 @@ struct Signals {
 };
 
 class OscillatorState {
-  float phase = -1.f;  // in [-1, 1
-  float pitch = 0.f;   // Unbounded, usually between [-10, 10]
+  float phase = -1.f; // in [-1, 1
+  float pitch = 0.f;  // Unbounded, usually between [-10, 10]
   const float baseFrequency;
-  float frequency;     // baseFrequency * 2 ^ pitch;
-  bool cycle = false;  // Used to determine the current cycle for the sub-pulse.
+  float frequency;    // baseFrequency * 2 ^ pitch;
+  bool cycle = false; // Used to determine the current cycle for the sub-pulse.
 
- public:
+  const float LOW_PASS_CUTOFF_FREQUENCY = 0.5f;
+  const float HIGH_PASS_CUTOFF_FREQUENCY = 220000.0f;
+  const float INITIAL_SAMPLE_RATE = 48000.f;
+
+  Dsp::SimpleFilter<Dsp::ChebyshevI::BandStop<3>, 1> f;
+public:
   OscillatorState(float startingFrequency)
-      : baseFrequency(startingFrequency), frequency(startingFrequency) {}
+      : baseFrequency(startingFrequency), frequency(startingFrequency) {
+
+  }
+
+  void onSampleRateChange(float sampleRate) {
+  }
 
   // For hard sync
   void resetPhase() {
-    phase = -1.f;
+    phase = -1.0f;
     cycle = false;
   }
 
@@ -49,29 +61,30 @@ class OscillatorState {
     this->frequency = baseFrequency * std::pow(2.f, pitch);
   }
 
-  float triangle() {  // phase \in [-1, 1)
+  float triangle() { // phase \in [-1, 1)
     float triangle = this->phase + 1.f;
     if (triangle > 1.f) {
-      triangle = 1.f - (triangle - 1.f);  // triangle \in [0, 1)
+      triangle = 1.f - (triangle - 1.f); // triangle \in [0, 1)
     }
-    triangle *= 2.f;        // triangle \in [0, 2)
-    return triangle - 1.f;  // result in [-1, 1)
+    triangle *= 2.f;                         // triangle \in [0, 2)
+    return triangle - 1.f; // result in [-1, 1)
   }
 
-  float ramp() {  // phase \in [-1, 1)
-    return -this->phase;
+  float ramp() { // phase \in [-1, 1)
+    //float capacitorDecay = std::pow(8.0f, -this->phase-1.f);
+    return ((-this->phase));
   }
 
   // Shift the phase to make it match gemini.wntr.dev diagrams.
-  float sub() {  // phase \in [-1, 1)
+  float sub() { // phase \in [-1, 1)
     float sub = this->phase + (cycle ? 0.5f : 0.f);
-    return 0 < sub && sub <= 1 ? -1.f : 1.f;
+    return ((0 < sub && sub <= 1 ? -1.f : 1.f));
   }
 
   // phase \in [-1, 1), duty in [0, 1), offset \in [0, 1]
   float pulse(float duty, float offset = 0.f) {
     float normal = (phase + 1.f) / 2.f;
-    return normal > duty ? -1.f : 1.f;
+    return ((normal > duty ? -1.f : 1.f));
   }
 };
 
@@ -175,8 +188,8 @@ struct Gemini : Module {
     configOutput(POLLUX_MIX_OUTPUT, "Pollux");
   }
 
-  json_t* dataToJson() override {
-    json_t* rootJ = json_object();
+  json_t *dataToJson() override {
+    json_t *rootJ = json_object();
     for (size_t paramInt = CASTOR_PITCH_PARAM; paramInt != PARAMS_LEN;
          ++paramInt) {
       ParamId param = static_cast<ParamId>(paramInt);
@@ -184,7 +197,7 @@ struct Gemini : Module {
         Mode mode = static_cast<Mode>(modeInt);
         std::string name;
         sprintf(&name[0], "%ld/%ld/%d", paramInt, modeInt, true);
-        json_t* val = json_real(
+        json_t *val = json_real(
             static_cast<double>(this->getParamRef(true, mode, param)));
         json_object_set_new(rootJ, name.c_str(), val);
         sprintf(&name[0], "%ld/%ld/%d", paramInt, modeInt, false);
@@ -196,9 +209,9 @@ struct Gemini : Module {
     return rootJ;
   }
 
-  void dataFromJson(json_t* rootJ) override {
-    const char* key;
-    json_t* value;
+  void dataFromJson(json_t *rootJ) override {
+    const char *key;
+    json_t *value;
     json_object_foreach(rootJ, key, value) {
       int32_t paramInt, modeInt, altModeInt;
       sscanf(key, "%d/%d/%d", &paramInt, &modeInt, &altModeInt);
@@ -208,69 +221,69 @@ struct Gemini : Module {
     }
   }
 
-  inline float& getParamRef(ParamId param) {
+  inline float &getParamRef(ParamId param) {
     return this->getParamRef(this->altMode, this->mode, param);
   }
 
-  float& getParamRef(bool altMode, Mode lfoMode, ParamId param) {
+  float &getParamRef(bool altMode, Mode lfoMode, ParamId param) {
     switch (param) {
-      case CASTOR_PITCH_PARAM:
-        return castorPitchParam;
-      case POLLUX_PITCH_PARAM:
-        return lfoMode == HARD_SYNC ? polluxPitchMultiplier : polluxPitchParam;
-      case CASTOR_RAMP_LEVEL_PARAM:
-        return castorRampLevelParam;
-      case CASTOR_PULSE_LEVEL_PARAM:
-        return castorPulseLevelParam;
-      case POLLUX_PULSE_LEVEL_PARAM:
-        return polluxPulseLevelParam;
-      case BUTTON_PARAM:
-        return buttonParam;
-      case CASTOR_SUB_LEVEL_PARAM:
-        return castorSubParam;
-      case POLLUX_SUB_LEVEL_PARAM:
-        return polluxSubParam;
-      case POLLUX_RAMP_LEVEL_PARAM:
-        return polluxRampLevelParam;
-      case ALT_MODE_BUTTON_PARAM:
-        return altModeParam;
-      case CROSSFADE_PARAM:
-        return crossfadeParam;
-      case CASTOR_DUTY_PARAM:
-        switch (lfoMode) {
-          case CHORUS:
-            return castorDutyParam;
-          case LFO_PWM:
-            return altMode ? lfoPwmCastorPulseWidthCentre : castorDutyParam;
-          case LFO_FM:
-            return castorDutyParam;
-          case HARD_SYNC:
-            return castorDutyParam;
-        }
-      case POLLUX_DUTY_PARAM:
-        switch (lfoMode) {
-          case CHORUS:
-            return polluxDutyParam;
-          case LFO_PWM:
-            return altMode ? lfoPwmPolluxPulseWidthCentre : polluxDutyParam;
-          case LFO_FM:
-            return polluxDutyParam;
-          case HARD_SYNC:
-            return polluxDutyParam;
-        }
-      case LFO_PARAM:
-        switch (lfoMode) {
-          case CHORUS:
-            return altMode ? lfoAmplitudeValue : lfoChorusFreqCv;
-          case LFO_PWM:
-            return lfoPwmFreqCv;
-          case LFO_FM:
-            return lfoFmFreqCv;
-          case HARD_SYNC:
-            return lfoHardSyncFreqCv;
-        }
-      case PARAMS_LEN:
-        return paramsLen;
+    case CASTOR_PITCH_PARAM:
+      return castorPitchParam;
+    case POLLUX_PITCH_PARAM:
+      return lfoMode == HARD_SYNC ? polluxPitchMultiplier : polluxPitchParam;
+    case CASTOR_RAMP_LEVEL_PARAM:
+      return castorRampLevelParam;
+    case CASTOR_PULSE_LEVEL_PARAM:
+      return castorPulseLevelParam;
+    case POLLUX_PULSE_LEVEL_PARAM:
+      return polluxPulseLevelParam;
+    case BUTTON_PARAM:
+      return buttonParam;
+    case CASTOR_SUB_LEVEL_PARAM:
+      return castorSubParam;
+    case POLLUX_SUB_LEVEL_PARAM:
+      return polluxSubParam;
+    case POLLUX_RAMP_LEVEL_PARAM:
+      return polluxRampLevelParam;
+    case ALT_MODE_BUTTON_PARAM:
+      return altModeParam;
+    case CROSSFADE_PARAM:
+      return crossfadeParam;
+    case CASTOR_DUTY_PARAM:
+      switch (lfoMode) {
+      case CHORUS:
+        return castorDutyParam;
+      case LFO_PWM:
+        return altMode ? lfoPwmCastorPulseWidthCentre : castorDutyParam;
+      case LFO_FM:
+        return castorDutyParam;
+      case HARD_SYNC:
+        return castorDutyParam;
+      }
+    case POLLUX_DUTY_PARAM:
+      switch (lfoMode) {
+      case CHORUS:
+        return polluxDutyParam;
+      case LFO_PWM:
+        return altMode ? lfoPwmPolluxPulseWidthCentre : polluxDutyParam;
+      case LFO_FM:
+        return polluxDutyParam;
+      case HARD_SYNC:
+        return polluxDutyParam;
+      }
+    case LFO_PARAM:
+      switch (lfoMode) {
+      case CHORUS:
+        return altMode ? lfoAmplitudeValue : lfoChorusFreqCv;
+      case LFO_PWM:
+        return lfoPwmFreqCv;
+      case LFO_FM:
+        return lfoFmFreqCv;
+      case HARD_SYNC:
+        return lfoHardSyncFreqCv;
+      }
+    case PARAMS_LEN:
+      return paramsLen;
     }
   }
 
@@ -293,17 +306,22 @@ struct Gemini : Module {
         if (p == BUTTON_PARAM || p == ALT_MODE_BUTTON_PARAM) {
           continue;
         }
-        float& ref = this->getParamRef(nowAltMode, nowMode, p);
+        float &ref = this->getParamRef(nowAltMode, nowMode, p);
         params[p].setValue(ref);
       }
     } else {
       for (int paramInt = CASTOR_PITCH_PARAM; paramInt != PARAMS_LEN;
            ++paramInt) {
         ParamId p = static_cast<ParamId>(paramInt);
-        float& ref = this->getParamRef(nowAltMode, nowMode, p);
+        float &ref = this->getParamRef(nowAltMode, nowMode, p);
         ref = params[p].getValue();
       }
     }
+  }
+
+  void onSampleRateChange(const SampleRateChangeEvent &e) override {
+    castor.onSampleRateChange(e.sampleRate);
+    pollux.onSampleRateChange(e.sampleRate);
   }
 
   /*
@@ -330,7 +348,7 @@ struct Gemini : Module {
    * When the oscillators' frequency changes, keep the same phase to ensure a
    * smooth transition between different frequencies.
    */
-  void process(const ProcessArgs& args) override {
+  void process(const ProcessArgs &args) override {
     if (args.frame % 128 == 0) {
       updateParams();
     }
@@ -368,7 +386,7 @@ struct Gemini : Module {
         this->getMix(castorOut, polluxOut, this->getParamRef(CROSSFADE_PARAM)));
   }
 
- private:
+private:
   inline float getCastorPulseOffset() {
     return this->getPulseOffset(/*isCastor=*/true);
   }
@@ -379,13 +397,13 @@ struct Gemini : Module {
 
   inline float getPulseOffset(bool isCastor) {
     return this->getMode() == LFO_PWM
-               ? this->getParamRef(
-                     true, LFO_PWM,
-                     isCastor ? CASTOR_DUTY_PARAM : POLLUX_DUTY_PARAM)
+               ? this->getParamRef(true, LFO_PWM,
+                                   isCastor ? CASTOR_DUTY_PARAM
+                                            : POLLUX_DUTY_PARAM)
                : 0.f;
   }
 
-  float getOutput(Signals& wave, Signals& amplitude) {
+  float getOutput(Signals &wave, Signals &amplitude) {
     return 5.f *
            (wave.ramp * amplitude.ramp + wave.pulse * amplitude.pulse +
             wave.sub * amplitude.sub) /
@@ -396,7 +414,7 @@ struct Gemini : Module {
     return rack::simd::crossfade(castor, pollux, mix);
   }
 
-  Signals getSignals(OscillatorState& osc, float duty, float offset) {
+  Signals getSignals(OscillatorState &osc, float duty, float offset) {
     return {
         osc.ramp(),
         osc.pulse(duty, offset),
@@ -467,7 +485,7 @@ struct Gemini : Module {
 
   float getLfoValue() {
     // We need to attenuate it based on the LFO_PARAM
-    float value = this->lfo.triangle();  // in [-1, 1)
+    float value = this->lfo.triangle(); // in [-1, 1)
     if (this->getMode() == CHORUS || this->getMode() == HARD_SYNC) {
       value *= std::log(getParamRef(false, this->getMode(), LFO_PARAM) + 1);
     }
@@ -509,7 +527,7 @@ struct Gemini : Module {
 };
 
 struct GeminiWidget : ModuleWidget {
-  GeminiWidget(Gemini* module) {
+  GeminiWidget(Gemini *module) {
     setModule(module);
     setPanel(createPanel(asset::plugin(pluginInstance, "res/Gemini.svg")));
 
@@ -568,4 +586,4 @@ struct GeminiWidget : ModuleWidget {
   }
 };
 
-Model* modelGemini = createModel<Gemini, GeminiWidget>("Gemini");
+Model *modelGemini = createModel<Gemini, GeminiWidget>("Gemini");
