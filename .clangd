@@ -1,0 +1,20 @@
+CompileFlags:
+  Add: [ 
+        "-I/usr/include/nanosvg",
+        "-I/usr/include/vcvrack",
+        "-I/usr/include/vcvrack/dep",
+        "-I/usr/share/vcvrack/dep/include",
+        "-I/usr/share/vcvrack/include",
+        "-MMD",
+        "-MP",
+        "-Wall",
+        "-Wextra",
+        "-Wno-unused-parameter",
+        "-Wsuggest-override",
+        "-fPIC",
+        "-fno-gnu-unique",
+        "-fno-omit-frame-pointer",
+        "-funsafe-math-optimizations",
+        "-g",
+        "-std=c++23",
+  ]

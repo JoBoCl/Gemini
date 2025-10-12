@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cmath>
 #include <map>
@@ -13,17 +14,92 @@ struct Signals {
   float sub;
 };
 
+const static int SAMPLE_COUNT = 96000;
+
+using DecayTable = std::array<float, SAMPLE_COUNT>;
+
+inline constexpr float rampCapacitorDecayFn(const float phase) { //phase \in [-1, 1]
+  const float exponent = phase - 1.f; // exponent in [0, -2]
+  const float decay = std::exp2(exponent);  // decay \in [1, 0.25];
+  const float offset = decay - 0.25f; // offset \in [0.75, 0]
+  const float stretchFactor = 2.f / 0.75f;
+  const float stretch = offset * stretchFactor; // stretch \in [2, 0]
+  return stretch - 1.f;
+}
+
+constexpr DecayTable calculateRampDecayTable() {
+  DecayTable table{};
+  for (int32_t i = 0; i < SAMPLE_COUNT; i++) {
+    table[i] = rampCapacitorDecayFn((48000.0f - (float)i) / 48000.f);
+  }
+  return table;
+}
+
+static constexpr DecayTable rampCapacitorDecay = calculateRampDecayTable();
+
+int32_t indexFromPhase(float phase) {
+
+  const int32_t phaseI = std::floor(phase * 48000.f); // phaseI in [-48000, 48000]
+  const int32_t index = 48000 + phaseI; // index in [0,96000]
+  return index;
+}
+
+float rampWavetableValue(float phase) {  // phase in [-1, 1]
+  return rampCapacitorDecay[indexFromPhase(phase)];
+}
+
 class OscillatorState {
-  float phase = -1.f;  // in [-1, 1
+  float phase = -1.f;  // in [-1, 1]
   float pitch = 0.f;   // Unbounded, usually between [-10, 10]
   const float baseFrequency;
   float frequency;     // baseFrequency * 2 ^ pitch;
   bool cycle = false;  // Used to determine the current cycle for the sub-pulse.
+  bool filterEnabled = true;
+
+  dsp::TBiquadFilter<float> lowPassRamp;
+  dsp::TBiquadFilter<float> lowPassPulse;
+  dsp::TBiquadFilter<float> lowPassSub;
+  dsp::TBiquadFilter<float> highPassRamp;
+  dsp::TBiquadFilter<float> highPassPulse;
+  dsp::TBiquadFilter<float> highPassSub;
+
+  dsp::TBiquadFilter<float> lowPassMix;
+
+  std::vector<dsp::TBiquadFilter<float>*> allFilters{
+      &lowPassRamp,   &lowPassPulse, &lowPassSub, &highPassRamp,
+      &highPassPulse, &highPassSub,  &lowPassMix,
+  };
 
  public:
   OscillatorState(float startingFrequency)
-      : baseFrequency(startingFrequency), frequency(startingFrequency) {}
+      : baseFrequency(startingFrequency), frequency(startingFrequency) {
+    updateSampleRate(48000.f);
+  }
 
+  void updateSampleRate(float sampleRate) {
+    float halfIsh = (sampleRate - 0.01f) / 2.f;
+    lowPassRamp.setParameters(dsp::TBiquadFilter<float>::Type::LOWPASS_1POLE,
+                              halfIsh, 0.3f, 0.7f);
+    lowPassPulse.setParameters(dsp::TBiquadFilter<float>::Type::LOWPASS_1POLE,
+                               halfIsh, 0.3f, 0.7f);
+    lowPassSub.setParameters(dsp::TBiquadFilter<float>::Type::LOWPASS_1POLE,
+                             halfIsh, 0.3f, 0.7f);
+    highPassRamp.setParameters(dsp::TBiquadFilter<float>::Type::HIGHPASS_1POLE,
+                               0.3f / sampleRate, 0.3f, 0.7f);
+    highPassPulse.setParameters(dsp::TBiquadFilter<float>::Type::HIGHPASS_1POLE,
+                                0.3f / sampleRate, 0.3f, 0.7f);
+    highPassSub.setParameters(dsp::TBiquadFilter<float>::Type::HIGHPASS_1POLE,
+                              0.3f / sampleRate, 0.3f, 0.7f);
+
+    lowPassMix.setParameters(dsp::TBiquadFilter<float>::Type::HIGHPASS_1POLE,
+                             halfIsh, 0.3f, 0.7f);
+  }
+
+  void resetFilters() {
+    for (auto* filter : allFilters) {
+      filter->reset();
+    }
+  }
   // For hard sync
   void resetPhase() {
     phase = -1.f;
@@ -49,6 +125,13 @@ class OscillatorState {
     this->frequency = baseFrequency * std::pow(2.f, pitch);
   }
 
+  void enableFilter(bool filterEnabled) {
+    if (filterEnabled != this->filterEnabled) {
+      this->filterEnabled = filterEnabled;
+      this->resetFilters();
+    }
+  }
+
   float triangle() {  // phase \in [-1, 1)
     float triangle = this->phase + 1.f;
     if (triangle > 1.f) {
@@ -59,7 +142,11 @@ class OscillatorState {
   }
 
   float ramp() {  // phase \in [-1, 1)
-    return -this->phase;
+    if (this->filterEnabled) {
+      return rampWavetableValue(this->phase);
+    } else {
+      return -this->phase;
+    }
   }
 
   // Shift the phase to make it match gemini.wntr.dev diagrams.
@@ -72,6 +159,37 @@ class OscillatorState {
   float pulse(float duty, float offset = 0.f) {
     float normal = (phase + 1.f) / 2.f;
     return normal > duty ? -1.f : 1.f;
+  }
+
+  float process(dsp::TBiquadFilter<float>* filter, float value) {
+    if (!this->filterEnabled) {
+      return value;
+    }
+
+    float firstPass = filter->process(value);
+    if (std::isnan(firstPass)) {
+      filter->reset();
+      float secondPass = filter->process(value);
+      return std::isnan(secondPass) ? value : secondPass;
+    } else {
+      return firstPass;
+    }
+  }
+
+  Signals getSignals(float duty, float offset) {
+    return {
+        process(&highPassRamp, process(&lowPassRamp, ramp())),
+        process(&highPassPulse, process(&lowPassPulse, pulse(duty, offset))),
+        process(&highPassSub, process(&lowPassSub, sub())),
+    };
+  }
+
+  float getOutput(const Signals& wave, const Signals& amplitude) {
+    return process(&lowPassMix, 5.f *
+                                    (wave.ramp * amplitude.ramp +
+                                     wave.pulse * amplitude.pulse +
+                                     wave.sub * amplitude.sub) /
+                                    3.f);
   }
 };
 
@@ -91,6 +209,7 @@ struct Gemini : Module {
     POLLUX_SUB_LEVEL_PARAM,
     POLLUX_RAMP_LEVEL_PARAM,
     ALT_MODE_BUTTON_PARAM,
+    FILTER_ENABLE_BUTTON_PARAM,
     PARAMS_LEN
   };
   enum InputId {
@@ -139,6 +258,7 @@ struct Gemini : Module {
   float lfoFmCastorPulseWidth = 0.5f;
   float lfoFmPolluxPulseWidth = 0.5f;
   float polluxPitchMultiplier = -1.f;
+  float enableFilter = 1.f;
 
   float paramsLen = -3.14f;
 
@@ -164,6 +284,8 @@ struct Gemini : Module {
     configParam(POLLUX_SUB_LEVEL_PARAM, 0.f, 1.f, 0.f, "Pollux sub level");
     configParam(POLLUX_RAMP_LEVEL_PARAM, 0.f, 1.f, 0.f, "Pollux ramp level");
     configParam(ALT_MODE_BUTTON_PARAM, 0.f, 1.f, 0.f, "Alt Mode switch");
+    configParam(FILTER_ENABLE_BUTTON_PARAM, 0.f, 1.f, 1.f,
+                "Enable filtering switch");
 
     configInput(CASTOR_DUTY_INPUT, "Castor duty");
     configInput(POLLUX_DUTY_INPUT, "Pollux duty");
@@ -208,7 +330,7 @@ struct Gemini : Module {
     }
   }
 
-  inline float& getParamRef(ParamId param) {
+  float& getParamRef(ParamId param) {
     return this->getParamRef(this->altMode, this->mode, param);
   }
 
@@ -269,12 +391,14 @@ struct Gemini : Module {
           case HARD_SYNC:
             return lfoHardSyncFreqCv;
         }
+      case FILTER_ENABLE_BUTTON_PARAM:
+        return enableFilter;
       case PARAMS_LEN:
         return paramsLen;
     }
   }
 
-  inline Mode getMode() { return this->mode; }
+  Mode getMode() { return this->mode; }
 
   void updateParams() {
     bool nowAltMode = params[ALT_MODE_BUTTON_PARAM].getValue() == 1.f;
@@ -304,6 +428,8 @@ struct Gemini : Module {
         ref = params[p].getValue();
       }
     }
+    castor.enableFilter(1.f == this->getParamRef(FILTER_ENABLE_BUTTON_PARAM));
+    pollux.enableFilter(1.f == this->getParamRef(FILTER_ENABLE_BUTTON_PARAM));
   }
 
   /*
@@ -348,36 +474,41 @@ struct Gemini : Module {
       pollux.updatePhase(args.sampleTime);
     }
 
-    Signals castorSignals = this->getSignals(castor, this->getCastorDutyCycle(),
-                                             this->getCastorPulseOffset());
+    Signals castorSignals = castor.getSignals(this->getCastorDutyCycle(),
+                                              this->getCastorPulseOffset());
     Signals castorMix = this->getCastorMix();
 
     // Audio signals are typically +/-5V
     // https://vcvrack.com/manual/VoltageStandards
-    float castorOut = this->getOutput(castorSignals, castorMix);
+    float castorOut = castor.getOutput(castorSignals, castorMix);
     outputs[CASTOR_MIX_OUTPUT].setVoltage(castorOut);
 
     // Pollux's behaviour generally depends on the current mode.
-    Signals polluxSignals = this->getSignals(pollux, this->getPolluxDutyCycle(),
-                                             this->getPolluxPulseOffset());
+    Signals polluxSignals = pollux.getSignals(this->getPolluxDutyCycle(),
+                                              this->getPolluxPulseOffset());
     Signals polluxMix = this->getPolluxMix();
-    float polluxOut = this->getOutput(polluxSignals, polluxMix);
+    float polluxOut = pollux.getOutput(polluxSignals, polluxMix);
     outputs[POLLUX_MIX_OUTPUT].setVoltage(polluxOut);
 
     outputs[MIX_OUTPUT].setVoltage(
         this->getMix(castorOut, polluxOut, this->getParamRef(CROSSFADE_PARAM)));
   }
 
+  void onSampleRateChange(const SampleRateChangeEvent& e) override {
+    castor.updateSampleRate(e.sampleRate);
+    pollux.updateSampleRate(e.sampleRate);
+  }
+
  private:
-  inline float getCastorPulseOffset() {
+  float getCastorPulseOffset() {
     return this->getPulseOffset(/*isCastor=*/true);
   }
 
-  inline float getPolluxPulseOffset() {
+  float getPolluxPulseOffset() {
     return this->getPulseOffset(/*isCastor=*/false);
   }
 
-  inline float getPulseOffset(bool isCastor) {
+  float getPulseOffset(bool isCastor) {
     return this->getMode() == LFO_PWM
                ? this->getParamRef(
                      true, LFO_PWM,
@@ -385,23 +516,8 @@ struct Gemini : Module {
                : 0.f;
   }
 
-  float getOutput(Signals& wave, Signals& amplitude) {
-    return 5.f *
-           (wave.ramp * amplitude.ramp + wave.pulse * amplitude.pulse +
-            wave.sub * amplitude.sub) /
-           3.f;
-  }
-
-  inline float getMix(float castor, float pollux, float mix) {
+  float getMix(float castor, float pollux, float mix) {
     return rack::simd::crossfade(castor, pollux, mix);
-  }
-
-  Signals getSignals(OscillatorState& osc, float duty, float offset) {
-    return {
-        osc.ramp(),
-        osc.pulse(duty, offset),
-        osc.sub(),
-    };
   }
 
   Signals getCastorMix() {
@@ -549,6 +665,9 @@ struct GeminiWidget : ModuleWidget {
         mm2px(Vec(35.25, 88.806)), module, Gemini::BUTTON_PARAM));
     addParam(createParamCentered<VCVLatch>(mm2px(Vec(35.25, 99.963)), module,
                                            Gemini::ALT_MODE_BUTTON_PARAM));
+
+    addParam(createParamCentered<VCVLatch>(mm2px(Vec(35.25, 15.00)), module,
+                                           Gemini::FILTER_ENABLE_BUTTON_PARAM));
 
     addInput(createInputCentered<PJ301MPort>(mm2px(Vec(7.854, 95.994)), module,
                                              Gemini::CASTOR_DUTY_INPUT));
