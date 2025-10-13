@@ -4,7 +4,7 @@ RACK_DIR ?= ../..
 # FLAGS will be passed to both the C and C++ compiler
 FLAGS +=
 CFLAGS +=
-CXXFLAGS += -Wall -I DSP-Cpp-filters/lib -std=c++26 
+CXXFLAGS += -Wall -I DSP-Cpp-filters/lib -std=c++23 
 
 # Careful about linking to shared libraries, since you can't assume much about the user's environment and library search path.
 # Static libraries are fine, but they should be added to this plugin's build system.
@@ -21,4 +21,4 @@ DISTRIBUTABLES += $(wildcard presets)
 
 # Include the Rack plugin Makefile framework
 include $(RACK_DIR)/plugin.mk
-CXXFLAGS += -Wall -I DSP-Cpp-filters/lib -std=c++26
+CXXFLAGS += -Wall -I DSP-Cpp-filters/lib -std=c++23

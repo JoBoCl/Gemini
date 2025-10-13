@@ -38,7 +38,6 @@ constexpr DecayTable calculateRampDecayTable() {
 static constexpr DecayTable rampCapacitorDecay = calculateRampDecayTable();
 
 int32_t indexFromPhase(float phase) {
-
   const int32_t phaseI = std::floor(phase * 48000.f); // phaseI in [-48000, 48000]
   const int32_t index = 48000 + phaseI; // index in [0,96000]
   return index;
@@ -70,6 +69,9 @@ class OscillatorState {
       &highPassPulse, &highPassSub,  &lowPassMix,
   };
 
+  static constexpr float FILTER_Q = 0.7f;
+  static constexpr float FILTER_V = 1.f;
+
  public:
   OscillatorState(float startingFrequency)
       : baseFrequency(startingFrequency), frequency(startingFrequency) {
@@ -79,20 +81,20 @@ class OscillatorState {
   void updateSampleRate(float sampleRate) {
     float halfIsh = (sampleRate - 0.01f) / 2.f;
     lowPassRamp.setParameters(dsp::TBiquadFilter<float>::Type::LOWPASS_1POLE,
-                              halfIsh, 0.3f, 0.7f);
+                              halfIsh, FILTER_Q, FILTER_V);
     lowPassPulse.setParameters(dsp::TBiquadFilter<float>::Type::LOWPASS_1POLE,
-                               halfIsh, 0.3f, 0.7f);
+                               halfIsh, FILTER_Q, FILTER_V);
     lowPassSub.setParameters(dsp::TBiquadFilter<float>::Type::LOWPASS_1POLE,
-                             halfIsh, 0.3f, 0.7f);
+                             halfIsh, FILTER_Q, FILTER_V);
     highPassRamp.setParameters(dsp::TBiquadFilter<float>::Type::HIGHPASS_1POLE,
-                               0.3f / sampleRate, 0.3f, 0.7f);
+                               FILTER_Q / sampleRate, 0.3f, FILTER_V);
     highPassPulse.setParameters(dsp::TBiquadFilter<float>::Type::HIGHPASS_1POLE,
-                                0.3f / sampleRate, 0.3f, 0.7f);
+                                FILTER_Q / sampleRate, 0.3f, FILTER_V);
     highPassSub.setParameters(dsp::TBiquadFilter<float>::Type::HIGHPASS_1POLE,
-                              0.3f / sampleRate, 0.3f, 0.7f);
+                              FILTER_Q / sampleRate, 0.3f, FILTER_V);
 
     lowPassMix.setParameters(dsp::TBiquadFilter<float>::Type::HIGHPASS_1POLE,
-                             halfIsh, 0.3f, 0.7f);
+                             halfIsh, FILTER_Q, FILTER_V);
   }
 
   void resetFilters() {
@@ -151,8 +153,12 @@ class OscillatorState {
 
   // Shift the phase to make it match gemini.wntr.dev diagrams.
   float sub() {  // phase \in [-1, 1)
-    float sub = this->phase + (cycle ? 0.5f : 0.f);
-    return 0 < sub && sub <= 1 ? -1.f : 1.f;
+    float sub = this->phase + (cycle ? 0.5f : -0.5f);
+    if (this->filterEnabled) {
+      return cycle ? -1.f : 1.f;
+    } else {
+      return cycle ? -1.f : 1.f;
+    }
   }
 
   // phase \in [-1, 1), duty in [0, 1), offset \in [0, 1]
