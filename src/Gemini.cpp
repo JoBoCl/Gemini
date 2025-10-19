@@ -153,9 +153,10 @@ class OscillatorState {
 
   // Shift the phase to make it match gemini.wntr.dev diagrams.
   float sub() {  // phase \in [-1, 1)
-    float sub = this->phase + (cycle ? 0.5f : -0.5f);
     if (this->filterEnabled) {
-      return cycle ? -1.f : 1.f;
+      // Apply a slight linear decrease, proportional to the phase.
+      float offset = 1.f - ((1.f + phase) / 10.f);
+      return cycle ? -offset : offset;
     } else {
       return cycle ? -1.f : 1.f;
     }
