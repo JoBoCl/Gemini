@@ -5,6 +5,7 @@
 #include <map>
 #include <vector>
 
+#include "engine/ParamQuantity.hpp"
 #include "plugin.hpp"
 
 // TOOD - maybe this could be one of those fancy simd things?
@@ -16,14 +17,24 @@ struct Signals {
 
 const static int SAMPLE_COUNT = 96000;
 
+struct ReplaceableLabelParamQuantity : ParamQuantity {
+  std::string getLabel() override { return this->contents; }
+
+  void setLabel(std::string s) { this->contents = s; }
+
+ private:
+  std::string contents;
+};
+
 using DecayTable = std::array<float, SAMPLE_COUNT>;
 
-inline constexpr float rampCapacitorDecayFn(const float phase) { //phase \in [-1, 1]
-  const float exponent = phase - 1.f; // exponent in [0, -2]
+inline constexpr float rampCapacitorDecayFn(
+    const float phase) {                    // phase \in [-1, 1]
+  const float exponent = phase - 1.f;       // exponent in [0, -2]
   const float decay = std::exp2(exponent);  // decay \in [1, 0.25];
-  const float offset = decay - 0.25f; // offset \in [0.75, 0]
+  const float offset = decay - 0.25f;       // offset \in [0.75, 0]
   const float stretchFactor = 2.f / 0.75f;
-  const float stretch = offset * stretchFactor; // stretch \in [2, 0]
+  const float stretch = offset * stretchFactor;  // stretch \in [2, 0]
   return stretch - 1.f;
 }
 
@@ -38,8 +49,9 @@ constexpr DecayTable calculateRampDecayTable() {
 static constexpr DecayTable rampCapacitorDecay = calculateRampDecayTable();
 
 int32_t indexFromPhase(float phase) {
-  const int32_t phaseI = std::floor(phase * 48000.f); // phaseI in [-48000, 48000]
-  const int32_t index = 48000 + phaseI; // index in [0,96000]
+  const int32_t phaseI =
+      std::floor(phase * 48000.f);       // phaseI in [-48000, 48000]
+  const int32_t index = 48000 + phaseI;  // index in [0,96000]
   return index;
 }
 
@@ -274,25 +286,79 @@ struct Gemini : Module {
   OscillatorState pollux = OscillatorState(rack::dsp::FREQ_C4);
   OscillatorState lfo = OscillatorState(2.f);
 
+  std::map<ParamId, ReplaceableLabelParamQuantity*> paramIdToParam;
+
+  ReplaceableLabelParamQuantity* castor_pitch_param;
+  ReplaceableLabelParamQuantity* pollux_pitch_param;
+  ReplaceableLabelParamQuantity* lfo_param;
+  ReplaceableLabelParamQuantity* castor_duty_param;
+  ReplaceableLabelParamQuantity* pollux_duty_param;
+  ReplaceableLabelParamQuantity* crossfade_param;
+  ReplaceableLabelParamQuantity* castor_ramp_level_param;
+  ReplaceableLabelParamQuantity* castor_pulse_level_param;
+  ReplaceableLabelParamQuantity* pollux_pulse_level_param;
+  ReplaceableLabelParamQuantity* button_param;
+  ReplaceableLabelParamQuantity* castor_sub_level_param;
+  ReplaceableLabelParamQuantity* pollux_sub_level_param;
+  ReplaceableLabelParamQuantity* pollux_ramp_level_param;
+  ReplaceableLabelParamQuantity* alt_mode_button_param;
+  ReplaceableLabelParamQuantity* filter_enable_button_param;
+
   Gemini() {
     config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
 
-    configParam(CASTOR_PITCH_PARAM, -1.f, 1.f, 0.f, "Castor pitch");
-    configParam(POLLUX_PITCH_PARAM, -1.f, 1.f, 0.f, "Pollux pitch");
-    configParam(LFO_PARAM, 0.f, 1.f, 0.f, "LFO");
-    configParam(CASTOR_DUTY_PARAM, 0.f, 1.f, 0.f, "Castor duty");
-    configParam(POLLUX_DUTY_PARAM, 0.f, 1.f, 0.f, "Pollux duty");
-    configParam(CROSSFADE_PARAM, 0.f, 1.f, 0.5f, "Crossfade");
-    configParam(CASTOR_RAMP_LEVEL_PARAM, 0.f, 1.f, 0.f, "Castor ramp level");
-    configParam(CASTOR_PULSE_LEVEL_PARAM, 0.f, 1.f, 0.f, "Castor pulse level");
-    configParam(POLLUX_PULSE_LEVEL_PARAM, 0.f, 1.f, 0.f, "Pollux pulse level");
-    configParam(BUTTON_PARAM, 0.f, 3.f, 0.f, "Mode switch");
-    configParam(CASTOR_SUB_LEVEL_PARAM, 0.f, 1.f, 0.f, "Castor sub level");
-    configParam(POLLUX_SUB_LEVEL_PARAM, 0.f, 1.f, 0.f, "Pollux sub level");
-    configParam(POLLUX_RAMP_LEVEL_PARAM, 0.f, 1.f, 0.f, "Pollux ramp level");
-    configParam(ALT_MODE_BUTTON_PARAM, 0.f, 1.f, 0.f, "Alt Mode switch");
-    configParam(FILTER_ENABLE_BUTTON_PARAM, 0.f, 1.f, 1.f,
-                "Enable filtering switch");
+    castor_pitch_param = configParam<ReplaceableLabelParamQuantity>(
+        CASTOR_PITCH_PARAM, -1.f, 1.f, 0.f, "Castor pitch");
+    paramIdToParam[CASTOR_PITCH_PARAM] = castor_pitch_param;
+    pollux_pitch_param = configParam<ReplaceableLabelParamQuantity>(
+        POLLUX_PITCH_PARAM, -1.f, 1.f, 0.f, "Pollux pitch");
+    paramIdToParam[POLLUX_PITCH_PARAM] = pollux_pitch_param;
+    lfo_param = configParam<ReplaceableLabelParamQuantity>(LFO_PARAM, 0.f, 1.f,
+                                                           0.f, "LFO");
+    paramIdToParam[LFO_PARAM] = lfo_param;
+    castor_duty_param = configParam<ReplaceableLabelParamQuantity>(
+        CASTOR_DUTY_PARAM, 0.f, 1.f, 0.f, "Castor duty");
+    paramIdToParam[CASTOR_DUTY_PARAM] = castor_duty_param;
+    pollux_duty_param = configParam<ReplaceableLabelParamQuantity>(
+        POLLUX_DUTY_PARAM, 0.f, 1.f, 0.f, "Pollux duty");
+    paramIdToParam[POLLUX_DUTY_PARAM] = pollux_duty_param;
+    crossfade_param = configParam<ReplaceableLabelParamQuantity>(
+        CROSSFADE_PARAM, 0.f, 1.f, 0.5f, "Crossfade");
+    paramIdToParam[CROSSFADE_PARAM] = crossfade_param;
+    castor_ramp_level_param = configParam<ReplaceableLabelParamQuantity>(
+        CASTOR_RAMP_LEVEL_PARAM, 0.f, 1.f, 0.f, "Castor ramp level");
+    paramIdToParam[CASTOR_RAMP_LEVEL_PARAM] = castor_ramp_level_param;
+    castor_pulse_level_param = configParam<ReplaceableLabelParamQuantity>(
+        CASTOR_PULSE_LEVEL_PARAM, 0.f, 1.f, 0.f, "Castor pulse level");
+    paramIdToParam[CASTOR_PULSE_LEVEL_PARAM] = castor_pulse_level_param;
+    pollux_pulse_level_param = configParam<ReplaceableLabelParamQuantity>(
+        POLLUX_PULSE_LEVEL_PARAM, 0.f, 1.f, 0.f, "Pollux pulse level");
+    paramIdToParam[POLLUX_PULSE_LEVEL_PARAM] = pollux_pulse_level_param;
+    button_param = configParam<ReplaceableLabelParamQuantity>(
+        BUTTON_PARAM, 0.f, 3.f, 0.f, "Mode switch");
+    paramIdToParam[BUTTON_PARAM] = button_param;
+    castor_sub_level_param = configParam<ReplaceableLabelParamQuantity>(
+        CASTOR_SUB_LEVEL_PARAM, 0.f, 1.f, 0.f, "Castor sub level");
+    paramIdToParam[CASTOR_SUB_LEVEL_PARAM] = castor_sub_level_param;
+    pollux_sub_level_param = configParam<ReplaceableLabelParamQuantity>(
+        POLLUX_SUB_LEVEL_PARAM, 0.f, 1.f, 0.f, "Pollux sub level");
+    paramIdToParam[POLLUX_SUB_LEVEL_PARAM] = pollux_sub_level_param;
+    pollux_ramp_level_param = configParam<ReplaceableLabelParamQuantity>(
+        POLLUX_RAMP_LEVEL_PARAM, 0.f, 1.f, 0.f, "Pollux ramp level");
+    paramIdToParam[POLLUX_RAMP_LEVEL_PARAM] = pollux_ramp_level_param;
+    alt_mode_button_param = configParam<ReplaceableLabelParamQuantity>(
+        ALT_MODE_BUTTON_PARAM, 0.f, 1.f, 0.f, "Alt Mode switch");
+    paramIdToParam[ALT_MODE_BUTTON_PARAM] = alt_mode_button_param;
+    filter_enable_button_param = configParam<ReplaceableLabelParamQuantity>(
+        FILTER_ENABLE_BUTTON_PARAM, 0.f, 1.f, 1.f, "Enable filtering switch");
+    paramIdToParam[FILTER_ENABLE_BUTTON_PARAM] = filter_enable_button_param;
+
+    for (int paramInt = CASTOR_PITCH_PARAM; paramInt != PARAMS_LEN;
+         ++paramInt) {
+      ParamId p = static_cast<ParamId>(paramInt);
+
+      paramIdToParam[p]->setLabel(getParamLabel(this->altMode, this->mode, p));
+    }
 
     configInput(CASTOR_DUTY_INPUT, "Castor duty");
     configInput(POLLUX_DUTY_INPUT, "Pollux duty");
@@ -339,6 +405,69 @@ struct Gemini : Module {
 
   float& getParamRef(ParamId param) {
     return this->getParamRef(this->altMode, this->mode, param);
+  }
+
+  std::string getParamLabel(bool altMode, Mode lfoMode, ParamId param) {
+    switch (param) {
+      case CASTOR_PITCH_PARAM:
+        return "Castor Pitch";
+      case POLLUX_PITCH_PARAM:
+        return lfoMode == HARD_SYNC ? "Pollux Pitch Ratio" : "Pollux Pitch";
+      case CASTOR_RAMP_LEVEL_PARAM:
+        return "Castor ramp level";
+      case CASTOR_PULSE_LEVEL_PARAM:
+        return "Castor Pulse Level";
+      case POLLUX_PULSE_LEVEL_PARAM:
+        return "Pollux Pulse Level";
+      case BUTTON_PARAM:
+        switch (lfoMode) {
+          case CHORUS:
+            return "Mode - Chorus";
+          case LFO_PWM:
+            return "Mode - LFO PWM";
+          case LFO_FM:
+            return "Mode - LFO FM";
+          case HARD_SYNC:
+            return "Mode - Hard Sync";
+        }
+      case CASTOR_SUB_LEVEL_PARAM:
+        return "Castor Sub Level";
+      case POLLUX_SUB_LEVEL_PARAM:
+        return "Pollux Sub Level";
+      case POLLUX_RAMP_LEVEL_PARAM:
+        return "Pollux Ramp Level";
+      case ALT_MODE_BUTTON_PARAM:
+        return altMode ? "Alt mode - enabled" : "Alt mode - disabled";
+      case CROSSFADE_PARAM:
+        return "Crossfade";
+      case CASTOR_DUTY_PARAM:
+        if (lfoMode == LFO_PWM && altMode) {
+          return "Castor pulse width centre position";
+        }
+        return "Castor Duty ratio";
+
+      case POLLUX_DUTY_PARAM:
+        if (lfoMode == LFO_PWM && altMode) {
+          return "Pollux pulse width centre position";
+        }
+        return "Pollux Duty ratio";
+      case LFO_PARAM:
+        switch (lfoMode) {
+          case CHORUS:
+            return altMode ? "LFO amplitude level" : "LFO frequency";
+          case LFO_PWM:
+            return "LFO PWM frequency";
+          case LFO_FM:
+            return "LFO FM frequency";
+          case HARD_SYNC:
+            return "LFO hard sync frequency";
+        }
+      case FILTER_ENABLE_BUTTON_PARAM:
+        return this->enableFilter == 1.f ? "Filter mode - enabled"
+                                         : "Filter mode - disabled";
+      case PARAMS_LEN:
+        return "NOOOOOO";
+    }
   }
 
   float& getParamRef(bool altMode, Mode lfoMode, ParamId param) {
@@ -433,6 +562,8 @@ struct Gemini : Module {
         ParamId p = static_cast<ParamId>(paramInt);
         float& ref = this->getParamRef(nowAltMode, nowMode, p);
         ref = params[p].getValue();
+        paramIdToParam[p]->setLabel(
+            getParamLabel(this->altMode, this->mode, p));
       }
     }
     castor.enableFilter(1.f == this->getParamRef(FILTER_ENABLE_BUTTON_PARAM));
