@@ -38,7 +38,7 @@ inline constexpr float rampCapacitorDecayFn(
   return stretch - 1.f;
 }
 
-constexpr DecayTable calculateRampDecayTable() {
+const DecayTable calculateRampDecayTable() {
   DecayTable table{};
   for (int32_t i = 0; i < SAMPLE_COUNT; i++) {
     table[i] = rampCapacitorDecayFn((48000.0f - (float)i) / 48000.f);
@@ -46,7 +46,7 @@ constexpr DecayTable calculateRampDecayTable() {
   return table;
 }
 
-static constexpr DecayTable rampCapacitorDecay = calculateRampDecayTable();
+static const DecayTable rampCapacitorDecay = calculateRampDecayTable();
 
 int32_t indexFromPhase(float phase) {
   const int32_t phaseI =
