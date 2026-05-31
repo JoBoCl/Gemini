@@ -4,6 +4,7 @@
 #include <cmath>
 #include <map>
 #include <vector>
+#include <cassert>
 
 #include "engine/ParamQuantity.hpp"
 #include "plugin.hpp"
@@ -52,11 +53,12 @@ int32_t indexFromPhase(float phase) {
   const int32_t phaseI =
       std::floor(phase * 48000.f);       // phaseI in [-48000, 48000]
   const int32_t index = 48000 + phaseI;  // index in [0,96000]
-  return index;
+  return index % 96000;
 }
 
 float rampWavetableValue(float phase) {  // phase in [-1, 1]
-  return rampCapacitorDecay[indexFromPhase(phase)];
+  int32_t idx = indexFromPhase(phase);
+  return rampCapacitorDecay[idx];
 }
 
 class OscillatorState {
@@ -142,7 +144,10 @@ class OscillatorState {
   void enableFilter(bool filterEnabled) {
     if (filterEnabled != this->filterEnabled) {
       this->filterEnabled = filterEnabled;
-      this->resetFilters();
+      // Only reset filters on enable.
+      if (filterEnabled) {
+        this->resetFilters();
+      }
     }
   }
 
@@ -176,6 +181,9 @@ class OscillatorState {
 
   // phase \in [-1, 1), duty in [0, 1), offset \in [0, 1]
   float pulse(float duty, float offset = 0.f) {
+    if (duty == 0.0 || duty == 1.0) {
+      return 0.0;
+    }
     float normal = (phase + 1.f) / 2.f;
     return normal > duty ? -1.f : 1.f;
   }
@@ -282,8 +290,8 @@ struct Gemini : Module {
   float paramsLen = -3.14f;
 
   // State
-  OscillatorState castor = OscillatorState(rack::dsp::FREQ_C4);
-  OscillatorState pollux = OscillatorState(rack::dsp::FREQ_C4);
+  std::vector<OscillatorState> castor = {OscillatorState(rack::dsp::FREQ_C4)};
+  std::vector<OscillatorState> pollux = {OscillatorState(rack::dsp::FREQ_C4)};
   OscillatorState lfo = OscillatorState(2.f);
 
   std::map<ParamId, ReplaceableLabelParamQuantity*> paramIdToParam;
@@ -566,8 +574,10 @@ struct Gemini : Module {
             getParamLabel(this->altMode, this->mode, p));
       }
     }
-    castor.enableFilter(1.f == this->getParamRef(FILTER_ENABLE_BUTTON_PARAM));
-    pollux.enableFilter(1.f == this->getParamRef(FILTER_ENABLE_BUTTON_PARAM));
+    bool enableFilter = 1.f == this->getParamRef(FILTER_ENABLE_BUTTON_PARAM);
+    auto ef = [enableFilter](auto& osc) { osc.enableFilter(enableFilter); };
+    std::for_each(castor.begin(), castor.end(), ef);
+    std::for_each(pollux.begin(), pollux.end(), ef);
   }
 
   /*
@@ -599,45 +609,78 @@ struct Gemini : Module {
       updateParams();
     }
 
+    // Gemini has at least one oscillator at all times, based on the number of
+    // Castor pitch inputs.
+    size_t oscillators = static_cast<size_t>(
+        std::max(1, inputs[CASTOR_PITCH_INPUT].getChannels()));
+    int64_t size_diff = castor.size() - oscillators;
+
+    if (size_diff < 0) {
+      while (size_diff < 0) {
+        castor.push_back(OscillatorState(rack::dsp::FREQ_C4));
+        pollux.push_back(OscillatorState(rack::dsp::FREQ_C4));
+        ++size_diff;
+      }
+      this->updateOutputCount(oscillators);
+    } else if (size_diff > 0) {
+      while (size_diff > 0) {
+        castor.pop_back();
+        pollux.pop_back();
+        --size_diff;
+      }
+      this->updateOutputCount(oscillators);
+    }
+
     lfo.updatePitch(this->getLfoCv());
     lfo.updatePhase(args.sampleTime);
 
-    castor.updatePitch(this->getCastorPitchCv());
-    bool castorReset = castor.updatePhase(args.sampleTime);
+    for (size_t i = 0; i < oscillators; i++) {
+      castor[i].updatePitch(this->getCastorPitchCv(i));
+      bool castorReset = castor[i].updatePhase(args.sampleTime);
 
-    pollux.updatePitch(this->getPolluxPitchCv());
-    if (mode == HARD_SYNC && castorReset) {
-      pollux.resetPhase();
-    } else {
-      pollux.updatePhase(args.sampleTime);
+      pollux[i].updatePitch(this->getPolluxPitchCv(i));
+      if (mode == HARD_SYNC && castorReset) {
+        pollux[i].resetPhase();
+      } else {
+        pollux[i].updatePhase(args.sampleTime);
+      }
+
+      Signals castorSignals = castor[i].getSignals(
+          this->getCastorDutyCycle(i), this->getCastorPulseOffset());
+      Signals castorMix = this->getCastorMix();
+
+      // Audio signals are typically +/-5V
+      // https://vcvrack.com/manual/VoltageStandards
+      float castorOut = castor[i].getOutput(castorSignals, castorMix);
+      outputs[CASTOR_MIX_OUTPUT].setVoltage(castorOut, i);
+
+      // Pollux's behaviour generally depends on the current mode.
+      Signals polluxSignals = pollux[i].getSignals(
+          this->getPolluxDutyCycle(i), this->getPolluxPulseOffset());
+      Signals polluxMix = this->getPolluxMix();
+      float polluxOut = pollux[i].getOutput(polluxSignals, polluxMix);
+      outputs[POLLUX_MIX_OUTPUT].setVoltage(polluxOut, i);
+
+      outputs[MIX_OUTPUT].setVoltage(
+          this->getMix(castorOut, polluxOut,
+                       this->getParamRef(CROSSFADE_PARAM)),
+          i);
     }
-
-    Signals castorSignals = castor.getSignals(this->getCastorDutyCycle(),
-                                              this->getCastorPulseOffset());
-    Signals castorMix = this->getCastorMix();
-
-    // Audio signals are typically +/-5V
-    // https://vcvrack.com/manual/VoltageStandards
-    float castorOut = castor.getOutput(castorSignals, castorMix);
-    outputs[CASTOR_MIX_OUTPUT].setVoltage(castorOut);
-
-    // Pollux's behaviour generally depends on the current mode.
-    Signals polluxSignals = pollux.getSignals(this->getPolluxDutyCycle(),
-                                              this->getPolluxPulseOffset());
-    Signals polluxMix = this->getPolluxMix();
-    float polluxOut = pollux.getOutput(polluxSignals, polluxMix);
-    outputs[POLLUX_MIX_OUTPUT].setVoltage(polluxOut);
-
-    outputs[MIX_OUTPUT].setVoltage(
-        this->getMix(castorOut, polluxOut, this->getParamRef(CROSSFADE_PARAM)));
   }
-
   void onSampleRateChange(const SampleRateChangeEvent& e) override {
-    castor.updateSampleRate(e.sampleRate);
-    pollux.updateSampleRate(e.sampleRate);
+    auto usr = [sr = e.sampleRate](auto& osc) { osc.updateSampleRate(sr); };
+    std::for_each(castor.begin(), castor.end(), usr);
+    std::for_each(pollux.begin(), pollux.end(), usr);
   }
 
  private:
+
+  void updateOutputCount(const size_t count) {
+    for (int i = CASTOR_MIX_OUTPUT; i != OUTPUTS_LEN; i++) {
+      outputs[i].setChannels(count);
+    }
+  }
+
   float getCastorPulseOffset() {
     return this->getPulseOffset(/*isCastor=*/true);
   }
@@ -677,9 +720,9 @@ struct Gemini : Module {
   }
 
   // Returns a value in [0, 1.f].
-  float getDutyCycle(InputId input, ParamId param) {
+  float getDutyCycle(InputId input, ParamId param, size_t index) {
     float baseDutyCycle =
-        this->getParamRef(param) + inputs[input].getNormalVoltage(0.f) / 5.f;
+        this->getParamRef(param) + inputs[input].getNormalVoltage(0.f, index) / 5.f;
     if (this->getMode() == LFO_PWM) {
       // LFO Value \in [-1, 1]
       baseDutyCycle += this->getLfoValue();
@@ -688,16 +731,16 @@ struct Gemini : Module {
     return rack::math::clamp(baseDutyCycle, -1.f, 1.f);
   }
 
-  float getCastorDutyCycle() {
-    return this->getDutyCycle(CASTOR_DUTY_INPUT, CASTOR_DUTY_PARAM);
+  float getCastorDutyCycle(size_t index) {
+    return this->getDutyCycle(CASTOR_DUTY_INPUT, CASTOR_DUTY_PARAM, index);
   }
 
-  float getPolluxDutyCycle() {
-    return this->getDutyCycle(POLLUX_DUTY_INPUT, POLLUX_DUTY_PARAM);
+  float getPolluxDutyCycle(size_t index) {
+    return this->getDutyCycle(POLLUX_DUTY_INPUT, POLLUX_DUTY_PARAM, index);
   }
 
-  float getCastorPitchCv() {
-    float basePitch = this->getCastorPitchCvBase();
+  float getCastorPitchCv(size_t index) {
+    float basePitch = this->getCastorPitchCvBase(index);
     if (getMode() != LFO_FM) {
       return basePitch;
     }
@@ -705,10 +748,10 @@ struct Gemini : Module {
     return basePitch + lfoValue;
   }
 
-  float getCastorPitchCvBase() {
-    if (inputs[CASTOR_PITCH_INPUT].isConnected()) {
+  float getCastorPitchCvBase(size_t index) {
+    if (inputs[CASTOR_PITCH_INPUT].getChannels() > index) {
       // Return Castor pitch with a the offset from the knob.
-      return inputs[CASTOR_PITCH_INPUT].getVoltage() +
+      return inputs[CASTOR_PITCH_INPUT].getVoltage(index) +
              params[CASTOR_PITCH_PARAM].getValue();
     } else {
       // Quantize the knob output.
@@ -736,27 +779,26 @@ struct Gemini : Module {
     return 5.f * (param + 1.f);
   }
 
-  float getPolluxPitchCv() {
-    float polluxBasePitchCv = this->getPolluxBasePitchCv();
+  float getPolluxPitchCv(size_t index) {
+    float polluxBasePitchCv = this->getPolluxBasePitchCv(index);
     if (this->getMode() == HARD_SYNC) {
       auto basePitchCv =
-          inputs[POLLUX_PITCH_PARAM].isConnected()
-              ? (rack::math::clamp(inputs[POLLUX_PITCH_PARAM].getVoltage(),
+          inputs[POLLUX_PITCH_PARAM].getChannels() > index
+              ? (rack::math::clamp(inputs[POLLUX_PITCH_PARAM].getVoltage(index),
                                    -6.f, 6.f))
-              : this->getCastorPitchCv();
+              : this->getCastorPitchCv(index);
       return basePitchCv + ((1.f + getParamRef(POLLUX_PITCH_PARAM)) * 1.5f);
     }
     if (this->getMode() == CHORUS) {
       return polluxBasePitchCv + this->getLfoValue();
     }
-    // switch (this->getMode()) { case CHORUS: case HARD_SYNC: }
     return polluxBasePitchCv;
   }
 
-  float getPolluxBasePitchCv() {
-    float mainPitchCv = inputs[POLLUX_PITCH_INPUT].isConnected()
-                            ? inputs[POLLUX_PITCH_INPUT].getVoltage()
-                            : this->getCastorPitchCv();
+  float getPolluxBasePitchCv(size_t index) {
+    float mainPitchCv = inputs[POLLUX_PITCH_INPUT].getChannels() > index
+                            ? inputs[POLLUX_PITCH_INPUT].getVoltage(index)
+                            : this->getCastorPitchCv(index);
 
     return mainPitchCv + params[POLLUX_PITCH_PARAM].getValue();
   }
